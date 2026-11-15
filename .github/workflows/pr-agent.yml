@@ -3,8 +3,8 @@ name: PR Agent
 # Reactivated 2026-10-10. It was parked on 2026-10-08 (#71) because the repo
 # had no Anthropic key: every run since #39 failed with "Missing Anthropic API
 # Key". The ANTHROPIC_KEY secret has since been set (the same funded key as
-# positonic/exponential), and #72 pointed the action at it, but the park in #71
-# landed after it, so nothing ran. This file mirrors positonic/exponential's
+# exponential-im/exponential), and #72 pointed the action at it, but the park in #71
+# landed after it, so nothing ran. This file mirrors exponential-im/exponential's
 # pr_agent.yml. This check is not required on main.
 on:
   pull_request:

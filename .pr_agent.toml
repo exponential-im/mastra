@@ -3,7 +3,7 @@ publish_output = true
 
 [pr_reviewer]
 # Raised from 4: Opus 5 follows caps literally, so a tight limit discards findings
-# it would otherwise surface. Matches positonic/exponential.
+# it would otherwise surface. Matches exponential-im/exponential.
 num_max_findings = 8
 require_tests_review = true
 # The auto-merge gate reads the review's 🔒 row and treats a missing one as a

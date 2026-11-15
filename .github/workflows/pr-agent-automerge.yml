@@ -2,7 +2,7 @@ name: PR-Agent auto-merge
 
 # Squash-merges a PR into main once PR-Agent has reviewed the PR's latest commit and left
 # nothing blocking on it, and every required check has passed. A port of
-# positonic/exponential's pr-agent-automerge.yml, minus its Prisma schema rule (this repo has
+# exponential-im/exponential's pr-agent-automerge.yml, minus its Prisma schema rule (this repo has
 # no migrations). Keep the two in step when the blocking rule changes.
 #
 # ⚠️  DRY RUN (env.DRY_RUN below): it decides and posts its verdict as a PR comment, but
@@ -48,7 +48,7 @@ name: PR-Agent auto-merge
 #
 # TO GO LIVE: set DRY_RUN to 'false', and first
 #   1. install a GitHub App with contents + pull-requests write on this repo (the one
-#      positonic/exponential's gate uses will do) and store its client id as the AUTOMERGE_APP_CLIENT_ID
+#      exponential-im/exponential's gate uses will do) and store its client id as the AUTOMERGE_APP_CLIENT_ID
 #      variable and its key as the AUTOMERGE_APP_PRIVATE_KEY secret of the
 #      `pr-agent-automerge` environment;
 #   2. restrict that environment to the main branch, so workflows on other branches can't
