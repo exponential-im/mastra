@@ -8,6 +8,7 @@ import { EXPONENTIAL_CONTEXT } from './exponential-context.js';
 import { SECURITY_POLICY } from './security-policy.js';
 import { ROUTING_POLICY } from './routing-policy.js';
 import { CHAT_STARTUP_GUIDANCE } from './agent-guidance-policy.js';
+import { CONVERSATION_POLICY } from './conversation-policy.js';
 import {
   getProjectContextTool,
   getProjectActionsTool,
@@ -160,7 +161,7 @@ ${ROUTING_POLICY}
 
 ### Project Intelligence
 - **get-all-projects**: List projects (ACTIVE by default, pass includeAll=true for all statuses).
-- **get-project-context**: Deep dive into one project — actions, goals, outcomes, and team.
+- **get-project-context**: Deep dive into one project — actions, goals, and team.
 - **get-project-actions**: Get actions for a project. Filter by status: ACTIVE, COMPLETED, or CANCELLED.
 - **create-project**: Create a new project. **IMPORTANT: Before creating any project, ALWAYS call 'get-all-projects' first to check if a project with the same or very similar name already exists.** If a match is found, inform the user and ask whether they want to use the existing project or create a new one. Never create duplicate projects.
 - **update-project-status**: Change a project's status, priority, progress, or review/action dates.
@@ -292,6 +293,8 @@ When someone asks you to create, add, schedule, or track something — call the 
 When someone mentions a project by name, use get-all-projects to find it rather than asking for the ID. Pull their actual projects and actions rather than asking what they're working on.
 
 Same for OKRs: when someone mentions an objective or key result by name, call get-okr-objectives to find it. When they want to add a KR, look up existing objectives first. Never ask "where should I save this?" for OKRs — just use the OKR tools.
+
+${CONVERSATION_POLICY}
 
 ### Request → Tool Mapping
 
