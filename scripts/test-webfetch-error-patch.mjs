@@ -15,7 +15,7 @@ const fakeFetch = async (_url, init) => {
       id: 'msg_test',
       type: 'message',
       role: 'assistant',
-      model: 'claude-sonnet-4-5-20250929',
+      model: 'claude-sonnet-5-5',
       content: [{ type: 'text', text: 'Understood — that page could not be fetched.' }],
       stop_reason: 'end_turn',
       usage: { input_tokens: 1, output_tokens: 1 },
@@ -27,7 +27,7 @@ const fakeFetch = async (_url, init) => {
 const anthropic = createAnthropic({ apiKey: 'test-key', fetch: fakeFetch });
 
 const result = await generateText({
-  model: anthropic('claude-sonnet-4-5-20250929'),
+  model: anthropic('claude-sonnet-5-5'),
   tools: { webFetch: anthropic.tools.webFetch_20250910({}) },
   messages: [
     { role: 'user', content: 'What is on the goal page?' },

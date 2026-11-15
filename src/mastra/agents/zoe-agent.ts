@@ -3,10 +3,11 @@ import { agentTools } from './toolsets.js';
 import { Agent } from '@mastra/core/agent';
 import { memory } from '../memory/index.js';
 import { neutralizeServerToolErrorsProcessor } from '../processors/neutralize-server-tool-errors.js';
-import { withAnthropicPromptCache } from '../utils/anthropic-prompt-cache.js';
+import { haikuModel, sonnetModel } from '../utils/anthropic-models.js';
 import { EXPONENTIAL_CONTEXT } from './exponential-context.js';
 import { SECURITY_POLICY } from './security-policy.js';
 import { ROUTING_POLICY } from './routing-policy.js';
+import { stepLimit } from './stop-conditions.js';
 import { CHAT_STARTUP_GUIDANCE } from './agent-guidance-policy.js';
 import { CONVERSATION_POLICY } from './conversation-policy.js';
 import {
@@ -601,8 +602,8 @@ You're the friend who remembers what they said they wanted and gently asks "hey,
 🔮
 `;
 
-const zoeModel = withAnthropicPromptCache(anthropic('claude-sonnet-4-5-20250929'));
-const zoeHaikuModel = withAnthropicPromptCache(anthropic('claude-haiku-4-5-20251001'));
+const zoeModel = sonnetModel();
+const zoeHaikuModel = haikuModel();
 
 export const zoeTools = {
     // Exponential tools
@@ -737,7 +738,15 @@ export const zoeTools = {
 // [chat/stream Stream complete] logs, the cap is biting and should be
 // raised — that signal is already captured per-request.
 const zoeDefaultOptions = {
-  maxSteps: 12,
+  // 12 steps at most, and no further step after a refusal (stop-conditions.ts).
+  stopWhen: stepLimit(12),
+};
+
+// The Haiku tier keeps its temperature. Sonnet 5.5 rejects sampling
+// parameters (a non-default temperature is a 400), so the options the two
+// tiers used to share are split here.
+const zoeHaikuDefaultOptions = {
+  ...zoeDefaultOptions,
   modelSettings: {
     temperature: 0.7,
   },
@@ -772,15 +781,16 @@ export const zoeAgent = new Agent({
 // are model-scoped so they're separate caches, but identical prefix shape
 // means both tiers cache reliably. Routed to from chat/stream by
 // pickModelTier when the turn looks trivial (greetings, short queries,
-// obvious lookups). Sub-2s first-token latency on simple turns; ~12× cheaper
-// than Sonnet.
+// obvious lookups). Sub-2s first-token latency on simple turns. Since the Sonnet
+// tier moved to Sonnet 5.5 ($2/$10 per MTok against Haiku 4.5's $1/$5) the
+// price gap is about 2× per token, so speed is the main reason for this tier.
 export const zoeAgentHaiku = new Agent({
   id: 'zoeAgentHaiku',
   name: 'Zoe',
   instructions: zoeInstructions,
   model: zoeHaikuModel,
   memory,
-  defaultOptions: zoeDefaultOptions,
+  defaultOptions: zoeHaikuDefaultOptions,
   // Ticket 674: the 'anthropic' profile is the full static map, so cost,
   // behaviour and Mastra's tool registry are exactly as before.
   tools: agentTools(zoeTools, 'anthropic'),

@@ -17,7 +17,8 @@
 import { anthropic } from '@ai-sdk/anthropic';
 import { Agent } from '@mastra/core/agent';
 import { memory } from '../memory/index.js';
-import { withAnthropicPromptCache } from '../utils/anthropic-prompt-cache.js';
+import { sonnetModel } from '../utils/anthropic-models.js';
+import { stepLimit } from './stop-conditions.js';
 import {
   parseActionItemsTool,
   getActionItemsTool,
@@ -93,9 +94,7 @@ When the user asks "what does Alice still owe?", group by meeting and show the o
 Concise, factual, action-oriented. No filler. If you can't confidently identify an owner or a date, say so plainly rather than fabricating one.
 `;
 
-const actionItemsModel = withAnthropicPromptCache(
-  anthropic('claude-sonnet-4-5-20250929'),
-);
+const actionItemsModel = sonnetModel();
 
 export const actionItemsAgent = new Agent({
   id: 'actionItemsAgent',
@@ -104,10 +103,7 @@ export const actionItemsAgent = new Agent({
   model: actionItemsModel,
   memory,
   defaultOptions: {
-    maxSteps: 20,
-    modelSettings: {
-      temperature: 0.3,
-    },
+    stopWhen: stepLimit(20),
   },
   tools: {
     parseActionItemsTool,

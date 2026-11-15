@@ -1,11 +1,12 @@
 import { Agent } from '@mastra/core/agent';
-import { hasToolCall, stepCountIs } from 'ai';
+import { hasToolCall } from 'ai';
 import { memory } from '../memory/index.js';
 import { neutralizeServerToolErrorsProcessor } from '../processors/neutralize-server-tool-errors.js';
 import { EXPONENTIAL_CONTEXT } from './exponential-context.js';
 import { SECURITY_POLICY } from './security-policy.js';
 import { RUN_STARTUP_GUIDANCE } from './agent-guidance-policy.js';
 import { assistantModel, assistantTools } from './assistant-agent.js';
+import { stepLimit } from './stop-conditions.js';
 import { runTools, runUpdateActionTool } from '../tools/run-tools.js';
 
 /**
@@ -199,10 +200,9 @@ export const assistantRunDefaultOptions = {
   // ending the run. The same holds per call — a caller passing maxSteps to
   // generate/stream silently re-opens the loop. hasToolCall matches the map
   // key (askOwnerTool), not the tool id (ask-owner).
-  stopWhen: [stepCountIs(12), ...RUN_ENDING_TOOL_KEYS.map((key) => hasToolCall(key))],
-  modelSettings: {
-    temperature: 0.5,
-  },
+  // stepLimit also ends the run on the step where the model refuses.
+  stopWhen: [...stepLimit(12), ...RUN_ENDING_TOOL_KEYS.map((key) => hasToolCall(key))],
+  // No temperature: Sonnet 5.5 rejects sampling parameters.
 };
 
 export const assistantRunAgent = new Agent({

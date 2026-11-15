@@ -119,8 +119,8 @@ export const anthropicPromptCacheMiddleware = {
         );
 
         // tool_search_bm25/regex requires the `advanced-tool-use-2025-11-20`
-        // beta header. As of @ai-sdk/anthropic 3.0.71 the provider does NOT
-        // auto-add this beta (compare web_search_*, which does). Without it
+        // beta header. As of @ai-sdk/anthropic 3.0.142 the provider still does NOT
+        // auto-add this beta for a plain `defer_loading` (compare web_fetch_*, which does). Without it
         // Anthropic 400s the request server-side; Mastra surfaces no error
         // and the client stream stalls until idle timeout.
         // See: https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool
@@ -165,6 +165,47 @@ export const stripTopPWhenTemperatureSetMiddleware = {
   },
 };
 
+/** Request settings a model needs on every call; see `anthropicRequestDefaultsMiddleware`. */
+export interface AnthropicRequestDefaults {
+  /** `providerOptions.anthropic` values (thinking, effort, sendReasoning, …). */
+  anthropic?: Record<string, unknown>;
+  /** `max_tokens` (thinking included) when the caller sets none. */
+  maxOutputTokens?: number;
+}
+
+/**
+ * Fills in the request settings a model needs on every call (see
+ * anthropic-models.ts). A value the caller set wins, so a per-call
+ * `providerOptions.anthropic.effort` or `maxOutputTokens` still overrides the
+ * default.
+ *
+ * Lives on the model rather than in each agent's `defaultOptions` because the
+ * settings belong to the model: Zoe and the Assistant each run on two models
+ * over one thread, and what one model requires the other rejects.
+ */
+export function anthropicRequestDefaultsMiddleware(defaults: AnthropicRequestDefaults) {
+  return {
+    specificationVersion: 'v3' as const,
+    transformParams: async ({
+      params,
+    }: {
+      params: { providerOptions?: Record<string, unknown>; maxOutputTokens?: number | null };
+    }) => {
+      const existingTop = params.providerOptions ?? {};
+      const existingAnthropic =
+        (existingTop.anthropic as Record<string, unknown> | undefined) ?? {};
+      return {
+        ...params,
+        maxOutputTokens: params.maxOutputTokens ?? defaults.maxOutputTokens,
+        providerOptions: {
+          ...existingTop,
+          anthropic: { ...defaults.anthropic, ...existingAnthropic },
+        },
+      };
+    },
+  };
+}
+
 type InputUsage = {
   total?: number;
   noCache?: number;
@@ -197,18 +238,75 @@ export function logPromptCacheUsage(
   });
 }
 
-/** Middleware that reports per-call cache usage via `logPromptCacheUsage`. */
+/** The parts of a finished model call (generate result or stream `finish` chunk) read below. */
+type FinishedCall = {
+  usage?: { inputTokens?: InputUsage };
+  finishReason?: unknown;
+  providerMetadata?: Record<string, unknown>;
+};
+
+/**
+ * Logs the two outcomes that otherwise look like nothing happened:
+ *
+ * - **A refusal.** Anthropic's safety classifiers can decline a request with
+ *   HTTP 200 and `stop_reason: "refusal"`; the turn then ends with no text.
+ *   The category (`cyber`, `bio`, `frontier_llm`, `reasoning_extraction`,
+ *   `general_harms`, …) says which classifier it was.
+ * - **Dropped thinking blocks.** `sonnetModel` asks the API to drop, rather
+ *   than reject, thinking blocks whose conversation changed underneath them
+ *   (see anthropic-models.ts). Each drop is reported back; a steady stream of
+ *   `prefix_binding_mismatch` means every turn is losing its earlier reasoning.
+ */
+export function logAnthropicCallOutcome(
+  modelId: string,
+  call: FinishedCall,
+  log: Pick<AppLogger, 'info' | 'warn'> = cacheLogger,
+): void {
+  const anthropicMetadata =
+    (call.providerMetadata?.anthropic as Record<string, unknown> | undefined) ?? {};
+
+  // LanguageModelV3 reports `{ unified, raw }`; older shapes report a string.
+  const finishReason = call.finishReason as { unified?: unknown; raw?: unknown } | string | undefined;
+  const rawReason = typeof finishReason === 'object' ? finishReason?.raw : finishReason;
+  if (rawReason === 'refusal') {
+    const stopDetails = anthropicMetadata.stopDetails as { category?: unknown } | undefined;
+    log.warn('model refused the request', {
+      modelId,
+      category: typeof stopDetails?.category === 'string' ? stopDetails.category : 'unknown',
+    });
+  }
+
+  const transformations = anthropicMetadata.inputTransformations;
+  if (Array.isArray(transformations)) {
+    const dropped = transformations.filter(
+      (entry: { type?: unknown }) => entry?.type === 'thinking_dropped',
+    ) as Array<{ reason?: unknown }>;
+    if (dropped.length > 0) {
+      log.info('thinking blocks dropped', {
+        modelId,
+        count: dropped.length,
+        reasons: [...new Set(dropped.map((entry) => String(entry.reason)))],
+      });
+    }
+  }
+}
+
+/**
+ * Middleware that reports per-call cache usage via `logPromptCacheUsage`, and
+ * refusals and dropped thinking blocks via `logAnthropicCallOutcome`.
+ */
 export const promptCacheUsageLoggingMiddleware = {
   specificationVersion: 'v3' as const,
   wrapGenerate: async ({
     doGenerate,
     model,
   }: {
-    doGenerate: () => PromiseLike<{ usage?: { inputTokens?: InputUsage } }>;
+    doGenerate: () => PromiseLike<FinishedCall>;
     model: { modelId: string };
   }) => {
     const result = await doGenerate();
     logPromptCacheUsage(model.modelId, result.usage?.inputTokens);
+    logAnthropicCallOutcome(model.modelId, result);
     return result;
   },
   wrapStream: async ({
@@ -223,8 +321,9 @@ export const promptCacheUsageLoggingMiddleware = {
       new TransformStream<{ type: string }, { type: string }>({
         transform(chunk, controller) {
           if (chunk.type === 'finish') {
-            const usage = (chunk as { usage?: { inputTokens?: InputUsage } }).usage;
-            logPromptCacheUsage(model.modelId, usage?.inputTokens);
+            const finished = chunk as FinishedCall;
+            logPromptCacheUsage(model.modelId, finished.usage?.inputTokens);
+            logAnthropicCallOutcome(model.modelId, finished);
           }
           controller.enqueue(chunk);
         },
@@ -240,14 +339,24 @@ export const promptCacheUsageLoggingMiddleware = {
  * misrouted-server-tool-calls.ts), apply prompt caching (system prompt +
  * rolling conversation breakpoint), and log per-call cache usage. Use for every Anthropic-backed agent with a long static prompt.
  *
+ * `requestDefaults` are settings to send on every request to this model
+ * unless the caller sets them. Agents get their models from `sonnetModel()`
+ * and `haikuModel()` in anthropic-models.ts, which pass the right ones.
+ *
  * Return type is intentionally inferred — the `ai` SDK's V3 types and
  * Mastra's V2 types are structurally compatible but nominally distinct;
  * letting the compiler infer avoids a cross-package V2↔V3 mismatch.
  */
-export function withAnthropicPromptCache<M>(model: M): M {
+export function withAnthropicPromptCache<M>(
+  model: M,
+  options: { requestDefaults?: AnthropicRequestDefaults } = {},
+): M {
   return wrapLanguageModel({
     model: model as never,
     middleware: [
+      ...(options.requestDefaults
+        ? [anthropicRequestDefaultsMiddleware(options.requestDefaults) as never]
+        : []),
       stripTopPWhenTemperatureSetMiddleware as never,
       // Before the cache middleware, so the rolling breakpoint lands on the
       // repaired prompt's real last message.

@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import { anthropic, createAnthropic } from '@ai-sdk/anthropic';
-import { generateText, type ModelMessage } from 'ai';
+import { generateText, type ModelMessage, type ToolSet } from 'ai';
 import { withAnthropicPromptCache } from './anthropic-prompt-cache.js';
+import { SONNET_MODEL_ID } from './anthropic-models.js';
 import { repairMisroutedServerToolCalls } from './misrouted-server-tool-calls.js';
 
 vi.mock('./logger.js', () => ({
@@ -25,7 +26,7 @@ function captureRequestBody() {
         id: 'msg_test',
         type: 'message',
         role: 'assistant',
-        model: 'claude-sonnet-4-5-20250929',
+        model: SONNET_MODEL_ID,
         content: [{ type: 'text', text: 'ok' }],
         stop_reason: 'end_turn',
         stop_sequence: null,
@@ -35,12 +36,15 @@ function captureRequestBody() {
     );
   });
   const model = withAnthropicPromptCache(
-    createAnthropic({ apiKey: 'test', fetch: fetch as never })('claude-sonnet-4-5-20250929'),
+    createAnthropic({ apiKey: 'test', fetch: fetch as never })(SONNET_MODEL_ID),
   );
   return { model, bodies };
 }
 
-const tools = { webSearch: anthropic.tools.webSearch_20250305({ maxUses: 5 }) };
+// Cast: @ai-sdk/anthropic now carries a newer @ai-sdk/provider-utils than `ai`
+// does, so its tool type and `ai`'s ToolSet are the same shape from two
+// copies of the package. The cast goes away when `ai` is upgraded to match.
+const tools = { webSearch: anthropic.tools.webSearch_20250305({ maxUses: 5 }) } as unknown as ToolSet;
 
 const misroutedTurn: ModelMessage[] = [
   { role: 'user', content: 'Help me prep for a call with Paul Wong' },

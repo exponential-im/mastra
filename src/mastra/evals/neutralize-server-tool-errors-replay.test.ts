@@ -55,7 +55,7 @@ const stubAnthropicFetch: typeof fetch = async () =>
       id: 'msg_stub',
       type: 'message',
       role: 'assistant',
-      model: 'claude-sonnet-4-5',
+      model: 'claude-sonnet-5-5',
       content: [{ type: 'text', text: 'ok' }],
       stop_reason: 'end_turn',
       usage: { input_tokens: 1, output_tokens: 1 },
@@ -64,7 +64,7 @@ const stubAnthropicFetch: typeof fetch = async () =>
   );
 
 const model = createAnthropic({ apiKey: 'sk-test-offline', fetch: stubAnthropicFetch })(
-  'claude-sonnet-4-5',
+  'claude-sonnet-5-5',
 );
 const webFetchTool = [
   {
