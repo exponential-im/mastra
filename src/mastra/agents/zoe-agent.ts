@@ -4,6 +4,7 @@ import { Agent } from '@mastra/core/agent';
 import { memory } from '../memory/index.js';
 import { neutralizeServerToolErrorsProcessor } from '../processors/neutralize-server-tool-errors.js';
 import { withAnthropicPromptCache } from '../utils/anthropic-prompt-cache.js';
+import { withOpenRouterFallback } from '../utils/model-routing.js';
 import { EXPONENTIAL_CONTEXT } from './exponential-context.js';
 import { SECURITY_POLICY } from './security-policy.js';
 import { ROUTING_POLICY } from './routing-policy.js';
@@ -597,7 +598,11 @@ You're the friend who remembers what they said they wanted and gently asks "hey,
 `;
 
 const zoeModel = withAnthropicPromptCache(anthropic('claude-sonnet-4-5-20250929'));
-const zoeHaikuModel = withAnthropicPromptCache(anthropic('claude-haiku-4-5-20251001'));
+// Anthropic direct; with OPENROUTER_API_KEY set, an OpenRouter fallback entry
+// that takes over only when the Anthropic call fails (ADR-0065 §3, ticket 675).
+const zoeHaikuModel = withOpenRouterFallback(
+  withAnthropicPromptCache(anthropic('claude-haiku-4-5-20251001')),
+);
 
 export const zoeTools = {
     // Exponential tools

@@ -170,6 +170,7 @@ All endpoints require `Authorization: Bearer {JWT}` header. The JWT must be sign
 
 Key variables (see documentation in `/docs` for setup details):
 - `OPENAI_API_KEY` - OpenAI API access
+- `OPENROUTER_API_KEY` - Optional second model provider (ADR-0065 §3, ticket 675). When set, observational memory and the channel summarizer run on OpenRouter (Anthropic / OpenAI direct as fallback) and the Haiku tier of Zoe and the Assistant falls back to OpenRouter when Anthropic fails. Unset, nothing changes. Model overrides: `OPENROUTER_OBSERVER_MODEL`, `OPENROUTER_SUMMARIZER_MODEL`, `OPENROUTER_FALLBACK_MODEL` (OpenRouter slugs such as `z-ai/glm-5.3-flash`). Routing lives in [src/mastra/utils/model-routing.ts](src/mastra/utils/model-routing.ts).
 - `DATABASE_URL` - PostgreSQL with pgvector
 - `TODO_APP_BASE_URL` - Project management API endpoint
 - `SLACK_BOT_TOKEN` - Slack integration

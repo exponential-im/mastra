@@ -19,12 +19,12 @@
  * `runChannelSummarizer` takes its side-effecting collaborators as injectable
  * dependencies so the orchestration is unit-testable without network/LLM/DB.
  */
-import { generateText } from 'ai';
-import { openai } from '@ai-sdk/openai';
+import { generateText, type LanguageModel } from 'ai';
 
 import { createLogger } from '../utils/logger.js';
 import { decryptToken } from '../utils/gateway-shared.js';
 import { authenticatedTrpcCall } from '../utils/authenticated-fetch.js';
+import { channelSummarizerModels } from '../utils/model-routing.js';
 import {
   getGroupDisplayName,
   getLastSummarizedAt,
@@ -109,16 +109,36 @@ function renderTranscript(messages: WindowMessage[]): string {
 /**
  * LLM summarization (thin shell around the model). Returns trimmed text; an
  * empty string means "nothing project-relevant — suppress".
+ *
+ * Tries each model in order and moves on when one throws: OpenRouter then
+ * OpenAI direct when OPENROUTER_API_KEY is set, OpenAI direct alone when it
+ * is not (ADR-0065 §3, ticket 675). Throws the last error if every model
+ * fails, which leaves the watermark where it was.
  */
 export async function summarizeMessages(
   messages: WindowMessage[],
+  models: LanguageModel[] = channelSummarizerModels(),
 ): Promise<string> {
-  const { text } = await generateText({
-    model: openai('gpt-4o-mini'),
-    system: SUMMARY_SYSTEM_PROMPT,
-    prompt: renderTranscript(messages),
-  });
-  return text.trim();
+  let lastError: unknown;
+  for (const [index, model] of models.entries()) {
+    try {
+      const { text } = await generateText({
+        model,
+        system: SUMMARY_SYSTEM_PROMPT,
+        prompt: renderTranscript(messages),
+      });
+      return text.trim();
+    } catch (err) {
+      lastError = err;
+      if (index < models.length - 1) {
+        logger.warn('Summarizer model failed; trying the next one', {
+          model: typeof model === 'string' ? model : `${model.provider}/${model.modelId}`,
+          err: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+  }
+  throw lastError;
 }
 
 export interface RecordChannelSummaryPayload {

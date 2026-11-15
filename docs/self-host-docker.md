@@ -59,6 +59,10 @@ docker run --rm -p 4111:4111 \
 | Variable | Default | What it is |
 |---|---|---|
 | `TZ` | `Europe/Berlin` (scheduler only) | Timezone for the proactive scheduler's cron expressions. |
+| `OPENROUTER_API_KEY` | unset | Second model provider (ADR-0065 §3 in the app repo). Unset, everything stays on Anthropic and OpenAI direct. Set, observational memory and the channel summarizer run on OpenRouter (with Anthropic and OpenAI direct as their fallbacks), and the Haiku tier of Zoe and the Assistant falls back to OpenRouter when an Anthropic call fails, for example when the Anthropic credit runs out. |
+| `OPENROUTER_OBSERVER_MODEL` | `anthropic/claude-haiku-4.5` | OpenRouter model for observational memory (observer and reflector). Only read when `OPENROUTER_API_KEY` is set. |
+| `OPENROUTER_SUMMARIZER_MODEL` | `openai/gpt-4o-mini` | OpenRouter model for the channel summarizer. Only read when `OPENROUTER_API_KEY` is set. |
+| `OPENROUTER_FALLBACK_MODEL` | `anthropic/claude-haiku-4.5` | OpenRouter model the Haiku tier falls back to. It gets function tools only (no Anthropic web search, web fetch or tool search). Only read when `OPENROUTER_API_KEY` is set. |
 
 ### Off unless you turn them on
 
