@@ -7,6 +7,7 @@ import { withAnthropicPromptCache } from '../utils/anthropic-prompt-cache.js';
 import { EXPONENTIAL_CONTEXT } from './exponential-context.js';
 import { SECURITY_POLICY } from './security-policy.js';
 import { ROUTING_POLICY } from './routing-policy.js';
+import { CHAT_STARTUP_GUIDANCE } from './agent-guidance-policy.js';
 import { CONVERSATION_POLICY } from './conversation-policy.js';
 import {
   getProjectContextTool,
@@ -97,6 +98,9 @@ import {
   logDecisionTool,
   updateDecisionTool,
   listDecisionsTool,
+  // Agent guidance (method-aware agents)
+  getMethodTool,
+  getContextTool,
   // Routing tools (ADR-0068 in exponential)
   listAssignableMembersTool,
   assignActionTool,
@@ -130,6 +134,7 @@ Your name, personality, and behavioral guidelines are provided in system message
 
 If no personality is provided, be helpful, concise, and friendly with a natural conversational tone.
 
+${CHAT_STARTUP_GUIDANCE}
 ## Your Tools
 
 You have real tools that create, read, and update data. When someone asks you to do something actionable, call the tool — don't describe what they *could* do or give them instructions on how to do it themselves.
@@ -477,6 +482,10 @@ export const assistantTools = {
     logDecisionTool,
     updateDecisionTool,
     listDecisionsTool,
+    // Agent guidance: the method once per thread, the context when the scope
+    // changes (startup line in the prompt)
+    getMethodTool,
+    getContextTool,
     // Routing tools (ADR-0068 in exponential) — chat only; run-excluded by
     // name in assistant-run-agent.ts RUN_EXCLUDED_TOOL_KEYS
     listAssignableMembersTool,
