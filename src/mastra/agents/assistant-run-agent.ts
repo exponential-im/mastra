@@ -49,6 +49,7 @@ export const RUN_ALLOWED_ASSISTANT_TOOL_KEYS = [
   'listProductsTool',
   'listCyclesTool',
   'listTicketsTool',
+  'listLabelsTool',
   'getOkrObjectivesTool',
   'getOkrStatsTool',
   'getMeetingTranscriptionsTool',

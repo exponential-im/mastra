@@ -83,6 +83,8 @@ import {
   // Product pipeline ticket tools
   listProductsTool,
   createTicketTool,
+  updateTicketTool,
+  listLabelsTool,
   bulkCreateTicketsTool,
   importNotionCycleTicketsTool,
   listCyclesTool,
@@ -201,7 +203,9 @@ ${ROUTING_POLICY}
 
 ### Product tickets (pipeline boards)
 - **list-products**: List products the user can access, with IDs. ALWAYS resolve a product by name here before filing tickets — never guess a productId.
-- **create-ticket**: File ONE ticket into a product's pipeline. Confirm title + product first.
+- **create-ticket**: File ONE ticket into a product's pipeline. Confirm title + product first. Pass \`labels\` that clearly fit the ticket (from list-labels).
+- **update-ticket**: Edit ONE existing ticket (title, body, type, status, priority, points, assignee, labels) by ticketId or productId + ticketNumber. \`addLabels\`/\`removeLabels\` edit the label set; \`labels\` replaces it. Only pass what changes. Relay returned labels and warnings honestly.
+- **list-labels**: List the labels available in a product's workspace (name, slug, description). Call it before labelling tickets and apply only labels whose name or description clearly fits the ticket content — never invent labels; unknown ones are skipped and reported in warnings.
 - **bulk-create-tickets**: File MANY tickets in one call. Pass cycleName/assigneeName as written (resolved server-side); top-level "labels" are applied to every ticket, per-ticket "labels" merge in. Report the returned created/failed manifest honestly.
 - **import-notion-cycle-tickets**: Import a whole Notion backlog cycle into a product in ONE server-side call — it resolves the cycle page, filters the backlog database on its cycle relation, maps fields, labels every ticket (default FROM-NOTION), and skips already-imported rows (safe to re-run). ALWAYS use this instead of hand-querying Notion + bulk-create-tickets when asked to import/sync a Notion cycle. Run dryRun:true first, show the preview, and only import after the user confirms.
 - **list-cycles**: List a workspace's cycles (sprints) with status, dates, goal, and ticket count. Use to see what cycles exist or find the current one. Pass a productId or workspaceId.
@@ -463,6 +467,7 @@ Use this to decide which tool to call:
 | "Create a page in Notion about..." / "Add [thing] to Notion" | notion-search (to find the right database) → notion-create-page |
 | "Import Cycle N from Notion" / "bring the Notion backlog into [product]" | list-products → notion-search (filter="database", e.g. "Backlog") → import-notion-cycle-tickets with dryRun:true → show preview, confirm → import-notion-cycle-tickets |
 | "File these tickets..." / user pastes a table of work items | list-products → bulk-create-tickets (labels for any shared tag) → report the manifest |
+| "Label ticket N as X" / "Move ticket N to QA" / "Retitle ticket N" | (have productId) → list-labels when labelling → update-ticket (productId + ticketNumber; addLabels/removeLabels) → report labels + warnings |
 | "What tickets are in cycle N?" / "Show me the backlog for [product]" / "What's blocked?" / "Could any of these have dependencies?" | list-products (resolve product; skip if page context already gives productId) → list-tickets (pass cycle as said) → analyse dependsOn/isBlocked, present findings |
 | "What cycles/sprints do we have?" / "What's the current cycle?" | list-products (or use page-context productId) → list-cycles |
 | "Ticket N depends on M" / "Mark N as blocked by M" / "Link these tickets" | (have productId) → PROPOSE the edges, confirm → add-ticket-dependencies |
@@ -625,6 +630,8 @@ export const zoeTools = {
     // Product pipeline ticket tools
     listProductsTool,
     createTicketTool,
+    updateTicketTool,
+    listLabelsTool,
     bulkCreateTicketsTool,
     importNotionCycleTicketsTool,
     listCyclesTool,

@@ -2519,7 +2519,7 @@ export { knowledgeTools, createPageTool, updatePageTool } from "./knowledge-tool
 export { readingListTools, saveToReadingListTool, listReadingListTool, markReadingListItemTool } from "./reading-list-tools.js";
 
 // Product pipeline ticket tools
-export { listProductsTool, createTicketTool, bulkCreateTicketsTool, importNotionCycleTicketsTool, listCyclesTool, listTicketsTool, addTicketDependenciesTool } from "./ticket-tools.js";
+export { listProductsTool, createTicketTool, updateTicketTool, listLabelsTool, bulkCreateTicketsTool, importNotionCycleTicketsTool, listCyclesTool, listTicketsTool, addTicketDependenciesTool } from "./ticket-tools.js";
 
 // WhatsApp search tools
 export { listWhatsAppChatsTool, getWhatsAppChatHistoryTool, searchWhatsAppChatsTool } from "./whatsapp-tools.js";

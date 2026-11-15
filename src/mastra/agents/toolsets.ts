@@ -94,6 +94,8 @@ export const TOOL_GROUPS: Record<string, ToolGroupId> = {
   // tickets: product pipeline
   listProductsTool: 'tickets',
   createTicketTool: 'tickets',
+  updateTicketTool: 'tickets',
+  listLabelsTool: 'tickets',
   bulkCreateTicketsTool: 'tickets',
   importNotionCycleTicketsTool: 'tickets',
   listCyclesTool: 'tickets',
