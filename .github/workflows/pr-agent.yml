@@ -9,12 +9,12 @@ name: PR Agent
 # because qodo-ai/pr-agent swallowed the error — until upstream 5641819
 # (2026-09-29) made the action fail on a swallowed tool error, which turned
 # the check red on every PR from 2026-10-08. Parked the same way as
-# positonic/exponential's pr_agent.yml (#801). This check is not required on
+# exponential-im/exponential's pr_agent.yml (#801). This check is not required on
 # main, so parking it blocks no merge.
 #
 # TO REACTIVATE: set a funded key —
 #
-#   gh secret set PR_AGENT_ANTHROPIC_KEY --repo positonic/mastra
+#   gh secret set PR_AGENT_ANTHROPIC_KEY --repo exponential-im/mastra
 #
 # then restore the trigger below to
 #
