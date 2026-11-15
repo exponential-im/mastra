@@ -27,7 +27,7 @@ const METHOD = {
   status: 'draft',
   contentHash: 'sha256:abc',
   publishedAt: null,
-  canonicalSource: { repo: 'positonic/exponential', path: 'content/docs/method', url: null },
+  canonicalSource: { repo: 'exponential-im/exponential', path: 'content/docs/method', url: null },
   documents: [{ id: 'method', title: 'The Exponential Method', href: '/docs/method', markdown: '# Method' }],
 };
 
