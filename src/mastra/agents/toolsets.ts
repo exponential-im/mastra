@@ -76,6 +76,14 @@ export const TOOL_GROUPS: Record<string, ToolGroupId> = {
   getAllGoalsTool: 'core',
   getTodayCalendarEventsTool: 'core',
   getUpcomingCalendarEventsTool: 'core',
+  // agent guidance: the startup line tells every agent to load the method
+  // and scoped context before substantive work, so it must be on the map whatever the turn
+  getMethodTool: 'core',
+  getContextTool: 'core',
+  // routing (ADR-0068 in exponential): a short-turn action — "give it to
+  // whoever handles travel" needs both in the same turn as the create
+  listAssignableMembersTool: 'core',
+  assignActionTool: 'core',
 
   // planning: project admin, triage and rescheduling
   createProjectTool: 'planning',
@@ -100,6 +108,11 @@ export const TOOL_GROUPS: Record<string, ToolGroupId> = {
   // pages: Knowledge Page authoring (ADR-0033)
   createPageTool: 'pages',
   updatePageTool: 'pages',
+  // Reading list (ticket pink.grape) rides with Knowledge: a saved link is a
+  // Resource, the consumption side of what Pages author.
+  saveToReadingListTool: 'pages',
+  listReadingListTool: 'pages',
+  markReadingListItemTool: 'pages',
 
   notionSearchTool: 'notion',
   notionGetPageTool: 'notion',

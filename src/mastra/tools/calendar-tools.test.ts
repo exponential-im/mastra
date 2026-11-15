@@ -20,6 +20,17 @@ const {
 } = await import('./index.js');
 const { normalizeDateTime } = await import('./zod-loose.js');
 
+// Mastra types a tool's outputSchema as a Standard Schema, not a zod schema, so
+// `.parse` is not on the type. Validate through the Standard Schema interface:
+// it returns `{ issues }` on failure and no issues on success.
+type StandardSchemaLike = { '~standard': { validate: (value: unknown) => unknown } };
+const outputIssues = (schema: StandardSchemaLike | undefined, payload: unknown) => {
+  if (!schema) throw new Error('tool has no outputSchema');
+  const result = schema['~standard'].validate(payload);
+  if (result instanceof Promise) throw new Error('outputSchema validated asynchronously');
+  return (result as { issues?: readonly unknown[] }).issues;
+};
+
 describe('calendar tool outputSchemas tolerate null wire fields', () => {
   it('get-today-calendar-events accepts timed + all-day events with null fields', () => {
     const payload = {
@@ -45,7 +56,7 @@ describe('calendar tool outputSchemas tolerate null wire fields', () => {
       ],
       date: '2026-06-16T08:00:00.000Z',
     };
-    expect(() => getTodayCalendarEventsTool.outputSchema!.parse(payload)).not.toThrow();
+    expect(outputIssues(getTodayCalendarEventsTool.outputSchema, payload)).toBeUndefined();
   });
 
   it('get-calendar-events (flat) accepts null location/description/status/htmlLink', () => {
@@ -65,7 +76,7 @@ describe('calendar tool outputSchemas tolerate null wire fields', () => {
       ],
       calendarConnected: true,
     };
-    expect(() => getCalendarEventsTool.outputSchema!.parse(payload)).not.toThrow();
+    expect(outputIssues(getCalendarEventsTool.outputSchema, payload)).toBeUndefined();
   });
 
   it('get-upcoming-calendar-events accepts null fields', () => {
@@ -82,7 +93,7 @@ describe('calendar tool outputSchemas tolerate null wire fields', () => {
       ],
       days: 7,
     };
-    expect(() => getUpcomingCalendarEventsTool.outputSchema!.parse(payload)).not.toThrow();
+    expect(outputIssues(getUpcomingCalendarEventsTool.outputSchema, payload)).toBeUndefined();
   });
 
   it('get-calendar-events-in-range accepts null fields', () => {
@@ -102,7 +113,11 @@ describe('calendar tool outputSchemas tolerate null wire fields', () => {
         },
       ],
     };
-    expect(() => getCalendarEventsInRangeTool.outputSchema!.parse(payload)).not.toThrow();
+    expect(outputIssues(getCalendarEventsInRangeTool.outputSchema, payload)).toBeUndefined();
+  });
+
+  it('still rejects a malformed payload (the check is not vacuous)', () => {
+    expect(outputIssues(getTodayCalendarEventsTool.outputSchema, { events: 'nope' })).toBeDefined();
   });
 });
 

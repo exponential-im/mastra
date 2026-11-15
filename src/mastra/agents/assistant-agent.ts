@@ -6,6 +6,9 @@ import { neutralizeServerToolErrorsProcessor } from '../processors/neutralize-se
 import { withAnthropicPromptCache } from '../utils/anthropic-prompt-cache.js';
 import { EXPONENTIAL_CONTEXT } from './exponential-context.js';
 import { SECURITY_POLICY } from './security-policy.js';
+import { ROUTING_POLICY } from './routing-policy.js';
+import { CHAT_STARTUP_GUIDANCE } from './agent-guidance-policy.js';
+import { CONVERSATION_POLICY } from './conversation-policy.js';
 import {
   getProjectContextTool,
   getProjectActionsTool,
@@ -95,6 +98,12 @@ import {
   logDecisionTool,
   updateDecisionTool,
   listDecisionsTool,
+  // Agent guidance (method-aware agents)
+  getMethodTool,
+  getContextTool,
+  // Routing tools (ADR-0068 in exponential)
+  listAssignableMembersTool,
+  assignActionTool,
 } from '../tools/index.js';
 
 /**
@@ -125,6 +134,7 @@ Your name, personality, and behavioral guidelines are provided in system message
 
 If no personality is provided, be helpful, concise, and friendly with a natural conversational tone.
 
+${CHAT_STARTUP_GUIDANCE}
 ## Your Tools
 
 You have real tools that create, read, and update data. When someone asks you to do something actionable, call the tool — don't describe what they *could* do or give them instructions on how to do it themselves.
@@ -138,6 +148,8 @@ You have real tools that create, read, and update data. When someone asks you to
 - **get-overdue-triage**: Explain WHY the overdue pile is that size before proposing anything. Splits overdue actions into **cohorts** — groups sharing one exact timestamp, the fingerprint of a bulk write like a generated project plan, which were never individually due — and **loose** actions dated one at a time, which are real missed commitments. Call it whenever get-todays-actions returns a lot of overdue work, or the user says they're overwhelmed/behind/buried. Lead with the reframe, not the number: "17 of these were created in one batch on 25 July and were never really due — want them back in their project backlogs?" beats "you have 43 overdue actions".
 - **defer-actions**: Amnesty — clear the dates on a set of actions so they drop back to their project backlog untimed and stop counting as overdue. The right disposition for a cohort. Nothing is deleted or cancelled; the work stays ACTIVE in the backlog, and you should say so. Confirm before deferring anything the user didn't point at.
 - **reschedule-actions**: Move several actions to a new do-date, for work that really is still due, just later. For a cohort prefer defer-actions — rescheduling re-inflicts the same pile tomorrow. For a single action use update-action.
+- **list-assignable-members**: Who an action can be assigned to — the same people, Assistants and agents the Assign modal offers — with the Positions each holds (title, Remit, not accountable for). Pass \`actionId\` for an existing action, or \`projectId\` (or nothing) for one you are about to create. Members carry \`isRequester\`, \`isRequestersAssistant\` and, for an agent with no Position, \`agentDescription\`.
+- **assign-action**: Assign an existing action to members by id (ids only from list-assignable-members). Adds to the assignees, never removes. Assigning an Assistant starts its Agent run; \`agentRunsQueued\` says whether one started. Before assigning an External agent or another user's Assistant you chose yourself, ask a one-word yes first (routing rule 3).
 
 **Do-date vs deadline:** \`scheduledStart\` is when the user plans to *work* on something; \`dueDate\` is when it's *due*. The /today page partitions on \`scheduledStart\` and it **wins over** \`dueDate\` — so to move an action out of the overdue group you must set \`scheduledStart\`. Setting \`dueDate\` alone will not do it.
 
@@ -145,9 +157,11 @@ You have real tools that create, read, and update data. When someone asks you to
 
 **Resolving a named project:** when the user names a project (possibly mis-transcribed from voice), call get-all-projects, pick the best match by name, and pass its real \`projectId\` — do **not** rely on the current page context. An explicitly passed \`projectId\` files the action there even if the user is viewing a different project, and works for shared/team projects the user can access but didn't create.
 
+${ROUTING_POLICY}
+
 ### Project Intelligence
 - **get-all-projects**: List projects (ACTIVE by default, pass includeAll=true for all statuses).
-- **get-project-context**: Deep dive into one project — actions, goals, outcomes, and team.
+- **get-project-context**: Deep dive into one project — actions, goals, and team.
 - **get-project-actions**: Get actions for a project. Filter by status: ACTIVE, COMPLETED, or CANCELLED.
 - **create-project**: Create a new project. **IMPORTANT: Before creating any project, ALWAYS call 'get-all-projects' first to check if a project with the same or very similar name already exists.** If a match is found, inform the user and ask whether they want to use the existing project or create a new one. Never create duplicate projects.
 - **update-project-status**: Change a project's status, priority, progress, or review/action dates.
@@ -280,11 +294,15 @@ When someone mentions a project by name, use get-all-projects to find it rather 
 
 Same for OKRs: when someone mentions an objective or key result by name, call get-okr-objectives to find it. When they want to add a KR, look up existing objectives first. Never ask "where should I save this?" for OKRs — just use the OKR tools.
 
+${CONVERSATION_POLICY}
+
 ### Request → Tool Mapping
 
 | They say something like... | You call... |
 |---|---|
 | "Create an action to..." / "Add a task for..." / "Remind me to..." | quick-create-action |
+| "Give it to whoever handles X" / "add X for someone else" / "assign it to the right person" | list-assignable-members → quick-create-action → assign-action (routing by Remit — see the routing rules under Action & Task Management) |
+| "Action these" / "handle this" / "get my assistant on it" | get-todays-actions (when the actions have no ids yet) → list-assignable-members → assign-action per action to the matching Assistant → one-line expectation (researches and asks; never books or sends) |
 | "What should I focus on today?" / "What are my priorities?" / "What's on my plate?" | get-todays-actions |
 | "I'm overwhelmed" / "I'm so behind" / "help me catch up" / lots of overdue showed up | get-overdue-triage → propose defer-actions for cohorts |
 | "Move these to tomorrow" / "push this week to Monday" | reschedule-actions (one action → update-action) — except numbered replies to a Shutdown recap, which follow the recap rules (update-action per action) |
@@ -464,6 +482,14 @@ export const assistantTools = {
     logDecisionTool,
     updateDecisionTool,
     listDecisionsTool,
+    // Agent guidance: the method once per thread, the context when the scope
+    // changes (startup line in the prompt)
+    getMethodTool,
+    getContextTool,
+    // Routing tools (ADR-0068 in exponential) — chat only; run-excluded by
+    // name in assistant-run-agent.ts RUN_EXCLUDED_TOOL_KEYS
+    listAssignableMembersTool,
+    assignActionTool,
     // Web search & fetch (Anthropic provider tools)
     webSearch: anthropic.tools.webSearch_20250305({ maxUses: 5 }),
     webFetch: anthropic.tools.webFetch_20250910({ maxUses: 3 }),

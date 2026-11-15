@@ -1,9 +1,24 @@
 [config]
+# GLM 5.3 through OpenRouter, the same as exponential-im/exponential. The key and
+# which tools run (review only) live in .github/workflows/pr-agent.yml.
+model = "openrouter/z-ai/glm-5.3"
+fallback_models = ["openrouter/z-ai/glm-5.2"]
+# Lets PR-Agent budget the diff even if its bundled litellm has no registry entry
+# for the model. The effective diff budget is max_model_tokens.
+custom_model_max_tokens = 200000
+# PR-Agent's default is 32k; bigger diffs get a partial review, which the gate holds.
+max_model_tokens = 128000
 publish_output = true
 
+[openrouter]
+# Serve GLM only from Z.AI's own endpoint, not the cheapest of ~40 OpenRouter
+# hosts (some run cut-down builds, and each would see our diffs). If Z.AI is down
+# the call fails and the check goes red.
+provider_only = ["z-ai"]
+
 [pr_reviewer]
-# Raised from 4: Opus 5 follows caps literally, so a tight limit discards findings
-# it would otherwise surface. Matches exponential-im/exponential.
+# Raised from 4 so a tight cap doesn't discard real findings. Matches
+# exponential-im/exponential.
 num_max_findings = 8
 require_tests_review = true
 # The auto-merge gate reads the review's 🔒 row and treats a missing one as a

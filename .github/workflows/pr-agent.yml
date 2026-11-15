@@ -1,19 +1,23 @@
 name: PR Agent
 #
-# Reactivated 2026-10-10. It was parked on 2026-10-08 (#71) because the repo
-# had no Anthropic key: every run since #39 failed with "Missing Anthropic API
-# Key". The ANTHROPIC_KEY secret has since been set (the same funded key as
-# exponential-im/exponential), and #72 pointed the action at it, but the park in #71
-# landed after it, so nothing ran. This file mirrors exponential-im/exponential's
-# pr_agent.yml. This check is not required on main.
+# Review-only on GLM 5.3 through OpenRouter, pinned to Z.AI's own endpoint. A port
+# of exponential-im/exponential's pr_agent.yml. This check is not required on main,
+# but pr-agent-automerge.yml listens for this workflow by name: keep `name: PR Agent`
+# and the job name `PR Agent review`.
+#
+# The app repo moved off Claude Opus 5 on 2026-10-11 (4 calls and about $0.75 a push,
+# vs one review call at roughly $0.06 on GLM 5.3). This repo's ANTHROPIC_KEY secret
+# was also rejected outright (AuthenticationError), so it is no longer used.
+#
+# Needs the OPENROUTER_API_KEY repository secret:
+#   gh secret set OPENROUTER_API_KEY --repo exponential-im/mastra
 on:
   pull_request:
     types: [opened, reopened, ready_for_review, synchronize]
   issue_comment:
     types: [created]
-
 jobs:
-  pr_agent:
+  pr_agent_job:
     # Skip when the event was triggered by a bot (e.g. PR-Agent's own comments)
     # to avoid an infinite review loop, and skip comments on non-PR issues.
     if: ${{ github.event.sender.type != 'Bot' && (github.event_name != 'issue_comment' || github.event.issue.pull_request) }}
@@ -28,28 +32,35 @@ jobs:
         id: started
         run: echo "at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
 
-      - name: PR Agent
+      - name: PR Agent action step
         id: pragent
         uses: qodo-ai/pr-agent@main
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ANTHROPIC.KEY: ${{ secrets.ANTHROPIC_KEY }}
-          # Repo-level behaviour is version-controlled in .pr_agent.toml.
-          config.model: "anthropic/claude-opus-5"
-          # Keep the fallback on Anthropic so PR-Agent never falls back to
-          # OpenAI (which would need an OPENAI_API_KEY).
-          config.fallback_models: '["anthropic/claude-sonnet-4-6"]'
-          # Needed if the image's litellm has no registry entry for the model.
+          OPENROUTER.KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          # The model also lives in .pr_agent.toml, and that file wins over these
+          # env vars. PR-Agent reads the file from main, though, so until a copy
+          # with the model is on main these are what apply. Keep the two in sync.
+          config.model: "openrouter/z-ai/glm-5.3"
+          config.fallback_models: '["openrouter/z-ai/glm-5.2"]'
           config.custom_model_max_tokens: "200000"
+          config.max_model_tokens: "128000"
+          openrouter.provider_only: '["z-ai"]'
           github_action_config.auto_review: "true"
-          github_action_config.auto_describe: "true"
-          github_action_config.auto_improve: "true"
+          github_action_config.auto_describe: "false"
+          github_action_config.auto_improve: "false"
           github_action_config.pr_actions: '["opened", "reopened", "ready_for_review", "synchronize"]'
 
       - name: Confirm a review was actually produced
-        # PR-Agent can swallow provider errors: it posts "Failed to generate
-        # code suggestions for PR" and still exits 0. That is how this repo ran
-        # a "green" reviewer for three months that never reviewed anything.
+        # PR-Agent swallows provider errors. It posts "Failed to generate code
+        # suggestions for PR" as a PR comment and still exits 0, so without this
+        # the job goes green having reviewed nothing — which is worse than no
+        # reviewer at all, because the tick reads as "a reviewer looked at this".
+        # Seen for real on PR 530: the Anthropic key was out of credit, the job
+        # was green, and four failure notices sat unread on the PR.
+        #
+        # This check is not in branch protection's required set, so a red tick
+        # here reports the outage without blocking anyone's merge.
         if: always() && steps.pragent.conclusion != 'skipped'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -62,13 +73,13 @@ jobs:
             echo "No PR number on this event; nothing to verify."
             exit 0
           fi
-          # Only comments from this run, so one bad run does not keep the check
-          # red on every later push to the same PR.
+          # Only comments from this run — otherwise one bad run would keep the
+          # check red on every later push to the same PR.
           gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --paginate \
             --jq "[.[] | select(.created_at >= \"${SINCE}\") | .body] | .[]" \
             > /tmp/pr_agent_comments.txt
           if grep -qiE 'failed to (generate|review)' /tmp/pr_agent_comments.txt; then
-            echo "::error title=PR-Agent produced no review::The action ran but every model call failed, so this PR was NOT reviewed. Check the step log for the provider error (usually a missing or out-of-credit ANTHROPIC_KEY secret)."
+            echo "::error title=PR-Agent produced no review::The action ran but every model call failed, so this PR was NOT reviewed. Check the step log for the provider error — it is usually an exhausted credit balance on the OPENROUTER_API_KEY secret."
             grep -iE 'failed to (generate|review)' /tmp/pr_agent_comments.txt | head -5
             exit 1
           fi
