@@ -8,6 +8,7 @@ import {
   authenticatedTrpcQuery,
 } from "../utils/authenticated-fetch.js";
 import { prepareUntrustedContent, auditWriteAction } from "../utils/content-safety.js";
+import { fitTranscript, transcriptLimit } from "./meeting-transcript-budget.js";
 import { asAppContext } from "../types/request-context.js";
 import { isForbidden } from "./routing-tools.js";
 import { looseBoolean, looseNumber, looseEnum, looseStringArray, looseEnumArray, looseAttendees, normalizeDateTime, resolveDateRange } from "./zod-loose.js";
@@ -1059,8 +1060,14 @@ export const getAllProjectsTool = createTool({
 export const getMeetingTranscriptionsTool = createTool({
   id: "get-meeting-transcriptions",
   description:
-    "Get meeting and call transcriptions. Use this for any request about calls, meetings, phone conversations, or video calls. Supports filtering by project, date range, participants, or meeting type. Set `includeTranscript: false` for list-style queries (titles + dates only); leave true when you need to read or summarize content. The active workspaceId is injected automatically from request context — meetings are scoped to that workspace.",
+    "Get meeting and call transcriptions. Use this for any request about calls, meetings, phone conversations, or video calls. Supports filtering by project, date range, participants, or meeting type. To read ONE meeting (e.g. the one the user is viewing), pass its `transcriptionId`: the whole transcript comes back. Without it, the latest few meetings share a character budget and long transcripts are cut; a cut one has `transcriptTruncated: true` and a `transcriptNote` saying how to read the rest. Never conclude that something was not said from a truncated transcript. Set `includeTranscript: false` for list-style queries (titles + dates only); leave true when you need to read or summarize content. The active workspaceId is injected automatically from request context — meetings are scoped to that workspace.",
   inputSchema: z.object({
+    transcriptionId: z
+      .string()
+      .optional()
+      .describe(
+        "ID of one specific meeting to fetch, whole. Use it whenever you know which meeting is meant (the page context gives it on a meeting page; list results give it as `id`)."
+      ),
     projectId: z.string().optional().describe("Filter by specific project ID"),
     startDate: z
       .string()
@@ -1092,8 +1099,9 @@ export const getMeetingTranscriptionsTool = createTool({
     maxTranscriptLength: looseNumber(z
       .number())
       .optional()
-      .default(2000)
-      .describe("Max characters per transcript when truncating (default: 2000)"),
+      .describe(
+        "Max characters per transcript. Omit it: one meeting fetched by transcriptionId is returned whole, and several meetings share a budget of about 60,000 characters. Set it only to read less."
+      ),
   }),
   outputSchema: z.object({
     transcriptions: z.array(
@@ -1107,6 +1115,9 @@ export const getMeetingTranscriptionsTool = createTool({
         projectId: z.string().nullish(),
         duration: z.number().nullish(),
         summary: z.string().nullish(),
+        transcriptLength: z.number().optional(),
+        transcriptTruncated: z.boolean().optional(),
+        transcriptNote: z.string().optional(),
       })
     ),
     total: z.number(),
@@ -1114,6 +1125,7 @@ export const getMeetingTranscriptionsTool = createTool({
   execute: async (inputData, ctx) => {
     const requestContext = asAppContext(ctx.requestContext);
     const {
+      transcriptionId,
       projectId,
       startDate,
       endDate,
@@ -1123,7 +1135,6 @@ export const getMeetingTranscriptionsTool = createTool({
       includeTranscript,
       truncateTranscript,
     } = inputData;
-    const maxTranscriptLength = inputData.maxTranscriptLength ?? 2000;
 
     console.log("🔍 [getMeetingTranscriptions] Starting execution");
 
@@ -1141,6 +1152,7 @@ export const getMeetingTranscriptionsTool = createTool({
       "mastra.getMeetingTranscriptions",
       {
         ...(workspaceId ? { workspaceId } : {}),
+        ...(transcriptionId ? { transcriptionId } : {}),
         projectId,
         startDate,
         endDate,
@@ -1152,14 +1164,21 @@ export const getMeetingTranscriptionsTool = createTool({
       { authToken, sessionId, userId }
     );
 
-    // Truncate transcripts to prevent context overflow
-    if (truncateTranscript && result.transcriptions) {
-      result.transcriptions = result.transcriptions.map((t: any) => ({
-        ...t,
-        transcript: t.transcript && t.transcript.length > maxTranscriptLength
-          ? t.transcript.slice(0, maxTranscriptLength) + '...[truncated]'
-          : t.transcript,
-      }));
+    // Fit transcripts to the context: one targeted meeting comes back whole,
+    // several share a budget, and every cut is flagged (see
+    // meeting-transcript-budget.ts). `truncateTranscript: false` opts out.
+    if (result.transcriptions) {
+      const withText = result.transcriptions.filter((t: any) => t.transcript).length;
+      const limit = truncateTranscript === false
+        ? Number.POSITIVE_INFINITY
+        : transcriptLimit({
+            count: withText,
+            targeted: Boolean(transcriptionId),
+            explicitMax: inputData.maxTranscriptLength,
+          });
+      result.transcriptions = result.transcriptions.map((t: any) =>
+        t.transcript ? { ...t, ...fitTranscript(t.id, t.transcript, limit) } : t
+      );
     }
 
     // Wrap transcript content — meeting transcripts are untrusted external content
@@ -1180,11 +1199,15 @@ export const getMeetingTranscriptionsTool = createTool({
 export const queryMeetingContextTool = createTool({
   id: "query-meeting-context",
   description:
-    "Semantic search across meeting and call transcriptions to find decisions, action items, deadlines, and project discussions. Use this for searching specific topics discussed in calls or meetings.",
+    "Semantic search across meeting and call transcriptions to find decisions, action items, deadlines, and project discussions. Use this for searching specific topics discussed in calls or meetings. Pass `transcriptionId` to search inside one meeting (e.g. the one the user is viewing). Results are excerpts: an empty result means no excerpt matched, not that the topic never came up, so read the meeting with get-meeting-transcriptions before saying something was not said. The active workspaceId is injected automatically from request context.",
   inputSchema: z.object({
     query: z
       .string()
       .describe("Search query for finding relevant meeting content"),
+    transcriptionId: z
+      .string()
+      .optional()
+      .describe("Search only inside this one meeting"),
     projectId: z
       .string()
       .optional()
@@ -1231,18 +1254,35 @@ export const queryMeetingContextTool = createTool({
   }),
   execute: async (inputData, ctx) => {
     const requestContext = asAppContext(ctx.requestContext);
-    const { query, projectId, dateRange, topK } = inputData;
+    const { query, transcriptionId, projectId, dateRange, topK } = inputData;
     const authToken = requestContext?.get("authToken");
     const sessionId = requestContext?.get("whatsappSession");
     const userId = requestContext?.get("userId");
+    const workspaceId = requestContext?.get("workspaceId");
 
     if (!authToken) {
       throw new Error("No authentication token available");
     }
+    // The app requires a workspace for every knowledge search (it is the
+    // tenant boundary). This tool went six months without sending one and
+    // 400'd on every call; fail here, in words the model can act on, if the
+    // conversation genuinely has none.
+    if (!workspaceId) {
+      throw new Error(
+        "Meeting search needs a workspace and this conversation has none. Use get-meeting-transcriptions to read meetings instead."
+      );
+    }
 
     const { data } = await authenticatedTrpcCall(
       "mastra.queryMeetingContext",
-      { query, projectId, dateRange, topK },
+      {
+        query,
+        workspaceId,
+        ...(transcriptionId ? { transcriptionId } : {}),
+        projectId,
+        dateRange,
+        topK,
+      },
       { authToken, sessionId, userId }
     );
 
