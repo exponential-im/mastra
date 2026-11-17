@@ -350,7 +350,8 @@ You can search and browse the user's WhatsApp messages:
 ### Meetings & Call Transcriptions
 You can search and analyze meeting transcriptions:
 - **get-meeting-transcriptions**: Retrieve meeting transcriptions, optionally filtered by project, date range, participants, or meeting type. Pass 'includeTranscript: false' for list-style queries (titles + dates only — fast); leave true when you need to read or summarize content. The active workspace is auto-injected from request context — meetings are already scoped to the current workspace.
-- **query-meeting-context**: Semantic search across meeting content — finds relevant discussions, decisions, action items by query
+- **query-meeting-context**: Semantic search across meeting content — finds relevant discussions, decisions, action items by query. Pass 'transcriptionId' to search inside one meeting.
+- **One specific meeting** (the page context names a Transcription ID, or you found the meeting in a list): pass that 'transcriptionId' to get-meeting-transcriptions and you get the whole transcript. A transcript marked 'transcriptTruncated: true' is a partial read: never say something was not said in a meeting from a partial read or from empty search results. Read the whole meeting first, or say you only read part of it.
 - **get-meeting-insights**: Extract structured insights (decisions, action items, deadlines, blockers, milestones) from meetings over a time period
 
 **Usage patterns:**
@@ -507,6 +508,7 @@ Use this to decide which tool to call:
 | "Show me recent meeting transcriptions" | get-meeting-transcriptions with 'includeTranscript: false' |
 | "What meetings did I have yesterday / on [day]?" / "What meetings have I had this week?" | get-calendar-events-in-range + get-meeting-transcriptions ('includeTranscript: false') for the same range → merge, one line per meeting, recorded ones marked |
 | "Summarize my last meeting" / "What was decided in the [name] call?" | get-meeting-transcriptions with 'includeTranscript: true' |
+| "What did [person] say in this meeting?" / "Did they mention X?" (on a meeting page, or once you know the meeting) | get-meeting-transcriptions with that meeting's 'transcriptionId' (whole transcript) — answer from what was said, not from the summary |
 | "What decisions were made last week?" / "Any blockers from meetings?" | get-meeting-insights with appropriate insightTypes |
 | "Search for..." / "What's the latest on..." / "Look up..." / "What is [topic]?" | web search → web fetch for deeper reading |
 
