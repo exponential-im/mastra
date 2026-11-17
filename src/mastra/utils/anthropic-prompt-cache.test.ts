@@ -3,9 +3,11 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { generateText, type ModelMessage } from 'ai';
 import {
   withAnthropicPromptCache,
+  logAnthropicCallOutcome,
   logPromptCacheUsage,
   promptCacheUsageLoggingMiddleware,
 } from './anthropic-prompt-cache.js';
+import { SONNET_MODEL_ID } from './anthropic-models.js';
 
 const loggedInfo = vi.hoisted(() => vi.fn());
 vi.mock('./logger.js', () => ({
@@ -25,7 +27,7 @@ function captureRequestBody() {
         id: 'msg_test',
         type: 'message',
         role: 'assistant',
-        model: 'claude-sonnet-4-5-20250929',
+        model: SONNET_MODEL_ID,
         content: [{ type: 'text', text: 'ok' }],
         stop_reason: 'end_turn',
         stop_sequence: null,
@@ -40,7 +42,7 @@ function captureRequestBody() {
     );
   });
   const model = withAnthropicPromptCache(
-    createAnthropic({ apiKey: 'test', fetch: fetch as never })('claude-sonnet-4-5-20250929'),
+    createAnthropic({ apiKey: 'test', fetch: fetch as never })(SONNET_MODEL_ID),
   );
   return { model, bodies };
 }
@@ -119,12 +121,12 @@ describe('logPromptCacheUsage', () => {
   it('logs the cache split and hit rate', () => {
     const info = vi.fn();
     logPromptCacheUsage(
-      'claude-sonnet-4-5-20250929',
+      SONNET_MODEL_ID,
       { total: 10_000, noCache: 100, cacheRead: 9_500, cacheWrite: 400 },
       { info },
     );
     expect(info).toHaveBeenCalledWith('prompt-cache usage', {
-      modelId: 'claude-sonnet-4-5-20250929',
+      modelId: SONNET_MODEL_ID,
       inputTotal: 10_000,
       noCache: 100,
       cacheRead: 9_500,
@@ -164,5 +166,66 @@ describe('logPromptCacheUsage', () => {
       'prompt-cache usage',
       expect.objectContaining({ modelId: 'claude-haiku-4-5-20251001', cacheRead: 1_900, hitRate: 0.95 }),
     );
+  });
+});
+
+describe('logAnthropicCallOutcome', () => {
+  const logs = () => ({ info: vi.fn(), warn: vi.fn() });
+
+  it('warns with the classifier category when the model refuses', () => {
+    const log = logs();
+    logAnthropicCallOutcome(
+      SONNET_MODEL_ID,
+      {
+        finishReason: { unified: 'content-filter', raw: 'refusal' },
+        providerMetadata: { anthropic: { stopDetails: { type: 'refusal', category: 'frontier_llm' } } },
+      },
+      log,
+    );
+    expect(log.warn).toHaveBeenCalledWith('model refused the request', {
+      modelId: SONNET_MODEL_ID,
+      category: 'frontier_llm',
+    });
+  });
+
+  it('reports thinking blocks the API dropped, by reason', () => {
+    const log = logs();
+    logAnthropicCallOutcome(
+      SONNET_MODEL_ID,
+      {
+        finishReason: { unified: 'stop', raw: 'end_turn' },
+        providerMetadata: {
+          anthropic: {
+            inputTransformations: [
+              { type: 'thinking_dropped', path: 'messages.1.content.0', reason: 'prefix_binding_mismatch' },
+              { type: 'thinking_dropped', path: 'messages.3.content.0', reason: 'prefix_binding_mismatch' },
+              { type: 'thinking_mismatch_allowed', path: 'messages.5.content.0', reason: 'prefix_binding_mismatch' },
+            ],
+          },
+        },
+      },
+      log,
+    );
+    expect(log.info).toHaveBeenCalledWith('thinking blocks dropped', {
+      modelId: SONNET_MODEL_ID,
+      count: 2,
+      reasons: ['prefix_binding_mismatch'],
+    });
+    expect(log.warn).not.toHaveBeenCalled();
+  });
+
+  it('stays quiet on an ordinary finish', () => {
+    const log = logs();
+    logAnthropicCallOutcome(
+      SONNET_MODEL_ID,
+      {
+        finishReason: { unified: 'stop', raw: 'end_turn' },
+        providerMetadata: { anthropic: { inputTransformations: [] } },
+      },
+      log,
+    );
+    logAnthropicCallOutcome(SONNET_MODEL_ID, { finishReason: 'stop' }, log);
+    expect(log.info).not.toHaveBeenCalled();
+    expect(log.warn).not.toHaveBeenCalled();
   });
 });

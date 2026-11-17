@@ -1,7 +1,7 @@
-import { anthropic } from '@ai-sdk/anthropic';
 import { Agent } from '@mastra/core/agent';
-import { withAnthropicPromptCache } from '../utils/anthropic-prompt-cache.js';
+import { sonnetModel } from '../utils/anthropic-models.js';
 import { SECURITY_POLICY_COMPACT } from './security-policy.js';
+import { stepLimit } from './stop-conditions.js';
 
 /**
  * The local-wiki librarian.
@@ -155,7 +155,7 @@ Lead with the answer. Prose over bullet soup. Say what is true and how you know
 it.
 `;
 
-const localWikiModel = withAnthropicPromptCache(anthropic('claude-sonnet-4-5-20250929'));
+const localWikiModel = sonnetModel();
 
 export const localWikiAgent = new Agent({
   id: 'localWikiAgent',
@@ -165,12 +165,9 @@ export const localWikiAgent = new Agent({
   // No `memory` and no `tools` — see the note above. Both are load-bearing.
   defaultOptions: {
     // Every tool is client-side, so each server request ends at the first
-    // tool call and maxSteps never engages — the multi-round walk is bounded
+    // tool call and the step limit never engages — the multi-round walk is bounded
     // (or not) by the caller's loop. Kept as a guard in case server-side
     // tools are ever added; the real round cap belongs in the client.
-    maxSteps: 20,
-    modelSettings: {
-      temperature: 0.3,
-    },
+    stopWhen: stepLimit(20),
   },
 });

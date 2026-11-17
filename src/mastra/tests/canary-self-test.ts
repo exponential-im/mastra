@@ -19,6 +19,7 @@
 
 import { Agent } from '@mastra/core/agent';
 import { SECURITY_POLICY } from '../agents/security-policy.js';
+import { SONNET_MODEL_ID } from '../utils/anthropic-models.js';
 
 // ─── Configuration ─────────────────────────────────────────────────────────
 
@@ -129,7 +130,7 @@ async function main() {
   let model: any;
   if (process.env.ANTHROPIC_API_KEY) {
     const { anthropic } = await import('@ai-sdk/anthropic');
-    model = anthropic('claude-sonnet-4-5-20250929');
+    model = anthropic(SONNET_MODEL_ID);
   } else if (process.env.OPENAI_API_KEY) {
     const { openai } = await import('@ai-sdk/openai');
     model = openai('gpt-4o-mini');

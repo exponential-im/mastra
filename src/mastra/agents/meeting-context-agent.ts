@@ -21,7 +21,8 @@
 import { anthropic } from '@ai-sdk/anthropic';
 import { Agent } from '@mastra/core/agent';
 import { memory } from '../memory/index.js';
-import { withAnthropicPromptCache } from '../utils/anthropic-prompt-cache.js';
+import { sonnetModel } from '../utils/anthropic-models.js';
+import { stepLimit } from './stop-conditions.js';
 import {
   ingestTranscriptTool,
   searchContextTool,
@@ -109,9 +110,7 @@ When deriving topic queries from a meeting title or agenda:
 Concise, factual, brief-oriented. No filler, no hype. When evidence is thin, say so. The user is reading this two minutes before a meeting starts — every line needs to earn its place.
 `;
 
-const meetingContextModel = withAnthropicPromptCache(
-  anthropic('claude-sonnet-4-5-20250929'),
-);
+const meetingContextModel = sonnetModel();
 
 export const meetingContextAgent = new Agent({
   id: 'meetingContextAgent',
@@ -120,10 +119,7 @@ export const meetingContextAgent = new Agent({
   model: meetingContextModel,
   memory,
   defaultOptions: {
-    maxSteps: 20,
-    modelSettings: {
-      temperature: 0.3,
-    },
+    stopWhen: stepLimit(20),
   },
   tools: {
     ingestTranscriptTool,

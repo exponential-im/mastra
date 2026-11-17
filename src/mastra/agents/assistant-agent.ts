@@ -3,9 +3,10 @@ import { agentTools } from './toolsets.js';
 import { Agent } from '@mastra/core/agent';
 import { memory } from '../memory/index.js';
 import { neutralizeServerToolErrorsProcessor } from '../processors/neutralize-server-tool-errors.js';
-import { withAnthropicPromptCache } from '../utils/anthropic-prompt-cache.js';
+import { haikuModel, sonnetModel } from '../utils/anthropic-models.js';
 import { EXPONENTIAL_CONTEXT } from './exponential-context.js';
 import { SECURITY_POLICY } from './security-policy.js';
+import { stepLimit } from './stop-conditions.js';
 import { ROUTING_POLICY } from './routing-policy.js';
 import { CHAT_STARTUP_GUIDANCE } from './agent-guidance-policy.js';
 import { CONVERSATION_POLICY } from './conversation-policy.js';
@@ -384,14 +385,22 @@ When listing actions, group by project and sort by due date.
 - Reserve tables for flat data whose every cell fits on one line (e.g. Name, Status, Priority).
 `;
 
-export const assistantModel = withAnthropicPromptCache(anthropic('claude-sonnet-4-5-20250929'));
-const assistantHaikuModel = withAnthropicPromptCache(anthropic('claude-haiku-4-5-20251001'));
+export const assistantModel = sonnetModel();
+const assistantHaikuModel = haikuModel();
 
 // See zoe-agent.ts for the rationale. Cap was 30, reduced to 12 to
 // bound worst-case latency on simple turns; raise if we see frequent
 // `finishReason: 'tool-calls'` in chat/stream "Stream complete" logs.
 export const assistantDefaultOptions = {
-  maxSteps: 12,
+  // 12 steps at most, and no further step after a refusal (stop-conditions.ts).
+  stopWhen: stepLimit(12),
+};
+
+// The Haiku tier keeps its temperature. Sonnet 5.5 rejects sampling
+// parameters (a non-default temperature is a 400), so the options the two
+// tiers used to share are split here.
+const assistantHaikuDefaultOptions = {
+  ...assistantDefaultOptions,
   modelSettings: {
     temperature: 0.7,
   },
@@ -540,7 +549,7 @@ export const assistantAgentHaiku = new Agent({
   instructions: assistantInstructions,
   model: assistantHaikuModel,
   memory,
-  defaultOptions: assistantDefaultOptions,
+  defaultOptions: assistantHaikuDefaultOptions,
   // Ticket 674: the 'anthropic' profile is the full static map, so cost,
   // behaviour and Mastra's tool registry are exactly as before.
   tools: agentTools(assistantTools, 'anthropic'),

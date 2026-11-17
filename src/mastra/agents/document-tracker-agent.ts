@@ -21,7 +21,8 @@
 import { anthropic } from '@ai-sdk/anthropic';
 import { Agent } from '@mastra/core/agent';
 import { memory } from '../memory/index.js';
-import { withAnthropicPromptCache } from '../utils/anthropic-prompt-cache.js';
+import { sonnetModel } from '../utils/anthropic-models.js';
+import { stepLimit } from './stop-conditions.js';
 import {
   ingestDocumentTool,
   searchDocumentsTool,
@@ -68,9 +69,7 @@ When the user doesn't specify, default to "upload".
 
 Concise, factual, action-oriented. Always include the documentId when reporting on a newly ingested or deleted document so the user has a stable handle for follow-up actions.`;
 
-const documentTrackerModel = withAnthropicPromptCache(
-  anthropic('claude-sonnet-4-5-20250929'),
-);
+const documentTrackerModel = sonnetModel();
 
 export const documentTrackerAgent = new Agent({
   id: 'documentTrackerAgent',
@@ -79,10 +78,7 @@ export const documentTrackerAgent = new Agent({
   model: documentTrackerModel,
   memory,
   defaultOptions: {
-    maxSteps: 20,
-    modelSettings: {
-      temperature: 0.3,
-    },
+    stopWhen: stepLimit(20),
   },
   tools: {
     ingestDocumentTool,
