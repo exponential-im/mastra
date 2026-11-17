@@ -28,3 +28,20 @@ jobs:
 
       - name: Run test suite
         run: npm run test
+
+  # The contract test reads a copy of the app's procedure contract
+  # (docs/tool-contracts.md). This job fails when the copy is behind the app.
+  contract-drift:
+    name: Contract copy is current
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # The script has no dependencies, so there is no install step.
+      - name: Compare the copy with the app's main
+        run: node scripts/sync-contract.mjs --check
