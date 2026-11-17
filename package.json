@@ -12,6 +12,7 @@
     "build": "mastra build",
     "start": "node .mastra/output/index.mjs",
     "eval-replay": "tsx --env-file=.env src/mastra/evals/eval-replay.ts",
+    "canary:tools": "tsx src/mastra/canary/cli.ts",
     "postinstall": "patch-package"
   },
   "keywords": [],
