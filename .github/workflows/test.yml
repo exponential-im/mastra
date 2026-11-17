@@ -43,7 +43,5 @@ jobs:
           node-version: 22
 
       # The script has no dependencies, so there is no install step.
-      # --allow-missing: passes with a warning while the app's main has no
-      # contract file. Remove the flag when the app's contract is on main.
       - name: Compare the copy with the app's main
-        run: node scripts/sync-contract.mjs --check --allow-missing
+        run: node scripts/sync-contract.mjs --check
