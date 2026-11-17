@@ -10,6 +10,7 @@
     "build": "mastra build",
     "start": "node .mastra/output/index.mjs",
     "eval-replay": "tsx --env-file=.env src/mastra/evals/eval-replay.ts",
+    "smoke:live": "tsx --env-file-if-exists=.env src/mastra/smoke/live-smoke.ts",
     "postinstall": "patch-package"
   },
   "keywords": [],
