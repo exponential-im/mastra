@@ -560,7 +560,17 @@ export const TOOL_INVENTORY: InventoryEntry[] = [
   {
     tool: findAvailableTimeSlotsTool,
     writes: false,
-    cases: [{ input: { date: '2026-11-20', startHour: 9, endHour: 17, slotDurationMinutes: 30 } }],
+    // The work day is on the person's clock: a zone the chat sent, or one the
+    // model names. With neither, the saved zone is read (and here, none is).
+    cases: [
+      {
+        name: 'zone sent by the chat',
+        input: { date: '2026-11-20', startHour: 9, endHour: 17, slotDurationMinutes: 30 },
+        context: { timezone: 'Europe/Berlin' },
+      },
+      { name: 'zone named by the model', input: { date: '2026-11-20', timeZone: 'Europe/Berlin' } },
+      { name: 'no zone in the turn', input: { date: '2026-11-20' } },
+    ],
   },
   {
     tool: createCalendarEventTool,

@@ -239,7 +239,9 @@ export const PROBE_PLANS: readonly ProbePlan[] = [
     'findAvailableTimeSlotsTool',
     core.findAvailableTimeSlotsTool,
     ['mastra.getCalendarEventsInRange'],
-    () => ({ date: '2026-01-05' }),
+    // A canary turn carries no zone and the canary user may have none saved;
+    // without one the tool asks instead of reading the calendar.
+    () => ({ date: '2026-01-05', timeZone: 'Europe/Berlin' }),
   ),
 
   // --- Email --------------------------------------------------------------

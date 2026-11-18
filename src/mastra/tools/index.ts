@@ -17,6 +17,7 @@ import {
   isValidTimeZone,
   resolveEventInstant,
   weeklyRule,
+  workDayWindow,
 } from "./calendar-time.js";
 import { asAppContext } from "../types/request-context.js";
 import { isForbidden } from "./routing-tools.js";
@@ -1687,24 +1688,32 @@ export const getCalendarEventsInRangeTool = createTool({
 
 export const findAvailableTimeSlotsTool = createTool({
   id: "find-available-time-slots",
-  description: "Find available time slots in the user's calendar. Useful for scheduling new events. Specify date and work hours, returns free slots.",
+  description: "Find available time slots in the user's calendar. Useful for scheduling new events. Specify the date and work hours on the user's own clock; returns free slots. Report slots to the user as `startsAt`/`endsAt` say (their zone), never the raw UTC `start`/`end`. If it returns `error`, nothing was checked: do what it says.",
   inputSchema: z.object({
-    date: z.string().describe("Date to check in YYYY-MM-DD format"),
-    startHour: looseNumber(z.number().min(0).max(23)).default(9).describe("Start of work day (hour, 0-23)"),
-    endHour: looseNumber(z.number().min(0).max(23)).default(17).describe("End of work day (hour, 0-23)"),
+    date: z.string().describe("Date to check in YYYY-MM-DD format, on the user's clock"),
+    startHour: looseNumber(z.number().min(0).max(23)).default(9).describe("Start of work day (hour, 0-23) on the user's clock"),
+    endHour: looseNumber(z.number().min(0).max(23)).default(17).describe("End of work day (hour, 0-23) on the user's clock"),
     slotDurationMinutes: looseNumber(z.number()).default(30).describe("Desired slot duration in minutes"),
+    timeZone: z.string().optional().describe("IANA time zone, e.g. \"Europe/Berlin\". Omit to use the user's own zone; set it only when they name a different one."),
   }),
   outputSchema: z.object({
     availableSlots: z.array(z.object({
       start: z.string(),
       end: z.string(),
       durationMinutes: z.number(),
+      startsAt: z.string().optional(),
+      endsAt: z.string().optional(),
     })),
     busySlots: z.array(z.object({
       start: z.string(),
       end: z.string(),
       summary: z.string(),
+      startsAt: z.string().optional(),
+      endsAt: z.string().optional(),
     })),
+    timeZone: z.string().optional(),
+    workDay: z.string().optional(),
+    error: z.string().optional(),
   }),
   execute: async (inputData, ctx) => {
     const requestContext = asAppContext(ctx.requestContext);
@@ -1716,16 +1725,34 @@ export const findAvailableTimeSlotsTool = createTool({
       throw new Error("No authentication token available");
     }
 
-    // Get events for the specified date
     const startHour = inputData.startHour ?? 9;
     const endHour = inputData.endHour ?? 17;
     const slotDurationMinutes = inputData.slotDurationMinutes ?? 30;
-    const dateObj = new Date(inputData.date);
-    const startOfDay = new Date(dateObj);
-    startOfDay.setHours(startHour, 0, 0, 0);
 
-    const endOfDay = new Date(dateObj);
-    endOfDay.setHours(endHour, 0, 0, 0);
+    // The work day is on the person's clock: the zone the model named, else
+    // their own (sent by the chat, or saved in their profile). 9 to 17 built
+    // with the server's setHours was 9 to 17 UTC, an hour off for Berlin.
+    // With no zone the tool asks; it never assumes UTC.
+    const requestedZone = inputData.timeZone?.trim() || undefined;
+    if (requestedZone && !isValidTimeZone(requestedZone)) {
+      throw new Error(`"${requestedZone}" is not a time zone I know. Use an IANA name such as "Europe/Berlin".`);
+    }
+    let timeZone = requestedZone;
+    if (!timeZone) {
+      const resolved = await resolveUserTimeZone(requestContext);
+      if (resolved.zone === null) {
+        return {
+          availableSlots: [],
+          busySlots: [],
+          error: resolved.unreadable
+            ? "Not checked: the user's saved time zone could not be read, so the work hours cannot be placed on their clock. Ask the user for their time zone and call again with timeZone (an IANA name such as \"Europe/Berlin\"). Do not assume UTC."
+            : "Not checked: the user's time zone is not known, so the work hours cannot be placed on their clock. Ask the user for their time zone, once, and call again with timeZone (an IANA name such as \"Europe/Berlin\"). Offer to save it with set-my-time-zone so you need not ask again; without that tool, point them to Settings → Profile. Do not assume UTC.",
+        };
+      }
+      timeZone = resolved.zone;
+    }
+
+    const { start: startOfDay, end: endOfDay } = workDayWindow(inputData.date, startHour, endHour, timeZone);
 
     const { data } = await authenticatedTrpcCall(
       "mastra.getCalendarEventsInRange",
@@ -1743,12 +1770,22 @@ export const findAvailableTimeSlotsTool = createTool({
         new Date(a.start.dateTime).getTime() - new Date(b.start.dateTime).getTime()
       );
 
+    const slot = (start: Date, end: Date) => ({
+      start: start.toISOString(),
+      end: end.toISOString(),
+      durationMinutes: Math.floor((end.getTime() - start.getTime()) / 60000),
+      startsAt: describeInstant(start, timeZone),
+      endsAt: describeInstant(end, timeZone),
+    });
+
     // Find gaps between events
     const availableSlots = [];
     const busySlots = events.map((e: any) => ({
       start: e.start.dateTime,
       end: e.end.dateTime,
       summary: e.summary,
+      startsAt: describeInstant(new Date(e.start.dateTime), timeZone),
+      endsAt: describeInstant(new Date(e.end.dateTime), timeZone),
     }));
 
     let currentTime = startOfDay;
@@ -1760,11 +1797,7 @@ export const findAvailableTimeSlotsTool = createTool({
       // Check gap before this event
       const gapMinutes = (eventStart.getTime() - currentTime.getTime()) / 60000;
       if (gapMinutes >= slotDurationMinutes) {
-        availableSlots.push({
-          start: currentTime.toISOString(),
-          end: eventStart.toISOString(),
-          durationMinutes: Math.floor(gapMinutes),
-        });
+        availableSlots.push(slot(currentTime, eventStart));
       }
 
       currentTime = eventEnd > currentTime ? eventEnd : currentTime;
@@ -1773,14 +1806,15 @@ export const findAvailableTimeSlotsTool = createTool({
     // Check gap after last event
     const finalGapMinutes = (endOfDay.getTime() - currentTime.getTime()) / 60000;
     if (finalGapMinutes >= slotDurationMinutes) {
-      availableSlots.push({
-        start: currentTime.toISOString(),
-        end: endOfDay.toISOString(),
-        durationMinutes: Math.floor(finalGapMinutes),
-      });
+      availableSlots.push(slot(currentTime, endOfDay));
     }
 
-    return { availableSlots, busySlots };
+    return {
+      availableSlots,
+      busySlots,
+      timeZone,
+      workDay: `${describeInstant(startOfDay, timeZone)} to ${describeInstant(endOfDay, timeZone)}`,
+    };
   },
 });
 

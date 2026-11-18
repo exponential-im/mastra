@@ -217,3 +217,34 @@ export function describeInstant(instant: Date, timeZone: string | undefined): st
   );
   return `${date}, ${time} (${zone})`;
 }
+
+const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/**
+ * The start and end instants of a work day on a zone's clock.
+ *
+ * find-available-time-slots used `new Date(date).setHours(9)`, which is 9:00
+ * on the server's clock. On a UTC server a Berlin user's 9 to 17 was 10:00 to
+ * 18:00 Berlin time. Each end is placed with its own offset, so a day on which
+ * the clocks change is still 9 to 17 on the wall.
+ */
+export function workDayWindow(
+  date: string,
+  startHour: number,
+  endHour: number,
+  timeZone: string,
+): { start: Date; end: Date } {
+  const match = DATE_ONLY.exec(date.trim());
+  if (!match) {
+    throw new Error(`Could not read date "${date}". Use YYYY-MM-DD, e.g. "2026-11-20".`);
+  }
+  if (endHour <= startHour) {
+    throw new Error(`endHour (${endHour}) must be after startHour (${startHour}).`);
+  }
+  const [, y, mo, d] = match;
+  const day = { year: Number(y), month: Number(mo), day: Number(d), minute: 0, second: 0 };
+  return {
+    start: wallTimeToInstant({ ...day, hour: startHour }, timeZone),
+    end: wallTimeToInstant({ ...day, hour: endHour }, timeZone),
+  };
+}
