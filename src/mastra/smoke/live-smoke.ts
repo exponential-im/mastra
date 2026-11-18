@@ -162,7 +162,10 @@ export async function runSmoke(options: SmokeOptions): Promise<SmokeReport> {
   const failures: string[] = [];
   if (result.error) failures.push(`the turn ended in an error: ${preview(String(result.error))}`);
   if (!reply) failures.push(`the agent gave no reply (finish reason: ${result.finishReason ?? 'unknown'})`);
-  const expected = toolCalls.filter((call) => call.name === options.expectedTool);
+  // A real model reaches a deferred tool through tool search and calls it by
+  // its id (get-todays-actions); a direct call uses the map key. Accept both.
+  const expectedId = (assistantTools as Record<string, { id?: string }>)[options.expectedTool]?.id;
+  const expected = toolCalls.filter((call) => call.name === options.expectedTool || call.name === expectedId);
   if (expected.length === 0) {
     failures.push(`the agent never called ${options.expectedTool}`);
   } else if (!expected.some((call) => call.ok)) {
@@ -288,7 +291,12 @@ async function main(): Promise<void> {
   const devKey = resolveDevKey();
   // The dev key must only ever be sent to Anthropic (or a loopback stand-in).
   const baseUrl = process.env.ANTHROPIC_BASE_URL;
-  if (baseUrl && new URL(baseUrl).hostname !== 'api.anthropic.com') {
+  if (baseUrl && new URL(baseUrl).hostname === 'api.anthropic.com') {
+    // Anthropic's own API: use the provider's default. Claude Code exports
+    // ANTHROPIC_BASE_URL=https://api.anthropic.com without the /v1 that
+    // @ai-sdk/anthropic expects, which turns every call into a 404.
+    delete process.env.ANTHROPIC_BASE_URL;
+  } else if (baseUrl) {
     assertLocalUrl(baseUrl, 'ANTHROPIC_BASE_URL');
   }
   // In this process only: every Anthropic call the agent makes now spends the

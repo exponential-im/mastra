@@ -56,7 +56,9 @@ The script refuses to run, before any model call, when:
 - the key's SHA-256 is listed in `ANTHROPIC_PRODUCTION_KEY_SHA256` (optional, comma-separated).
   Storing the production key's digest there catches it under the development name on a machine
   that does not have the production variable, such as CI. A digest is not a secret.
-- it is running in production (`NODE_ENV=production` or a Railway environment).
+- it is running in production (`NODE_ENV=production`, or a running Railway deployment). A `.env`
+  copied from `railway variables` is fine: it has the Railway environment name but not the
+  deployment id.
 - the app URL, or `ANTHROPIC_BASE_URL` if set, is not on this machine (Anthropic's own API aside).
 
 Inside the process, the development key replaces `ANTHROPIC_API_KEY`, so every model call the turn

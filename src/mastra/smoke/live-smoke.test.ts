@@ -46,8 +46,14 @@ describe('resolveDevKey', () => {
   it('refuses to run in a production environment', () => {
     expect(() => resolveDevKey({ ANTHROPIC_API_KEY_DEV: DEV_KEY, NODE_ENV: 'production' })).toThrow(/NODE_ENV/);
     expect(() =>
-      resolveDevKey({ ANTHROPIC_API_KEY_DEV: DEV_KEY, RAILWAY_ENVIRONMENT_NAME: 'production' }),
-    ).toThrow(/Railway/);
+      resolveDevKey({ ANTHROPIC_API_KEY_DEV: DEV_KEY, RAILWAY_DEPLOYMENT_ID: 'deploy-1' }),
+    ).toThrow(/Railway deployment/);
+  });
+
+  it('runs on a laptop whose .env was copied from Railway', () => {
+    expect(
+      resolveDevKey({ ANTHROPIC_API_KEY_DEV: DEV_KEY, RAILWAY_ENVIRONMENT_NAME: 'production', RAILWAY_SERVICE_ID: 's' }),
+    ).toBe(DEV_KEY);
   });
 
   it('never puts a key in the refusal', () => {
@@ -146,9 +152,12 @@ describe('runSmoke against a scripted model and the stub app', () => {
       // 1. the passing turn
       callsTool,
       answers(`You have one thing today: ${STUB_ACTION_NAME}.`),
-      // 2. answers without calling the tool
+      // 2. calls the tool by its id
+      { content: [{ type: 'tool_use', id: 'toolu_id', name: 'get-todays-actions', input: {} }], stopReason: 'tool_use' },
+      answers(`Today: ${STUB_ACTION_NAME}.`),
+      // 3. answers without calling the tool
       answers('You have nothing on today.'),
-      // 3. calls the tool, which the app rejects
+      // 4. calls the tool, which the app rejects
       callsTool,
       answers('I could not load your actions.'),
     ]);
@@ -190,6 +199,13 @@ describe('runSmoke against a scripted model and the stub app', () => {
     expect(report.costUsd).toBeGreaterThan(0);
     // The second model call carried the tool result back.
     expect(JSON.stringify(model.requests[1].body.messages)).toContain(STUB_ACTION_NAME);
+  }, 60_000);
+
+  it('accepts the tool called by its id, as a real model does after tool search', async () => {
+    const report = await runSmoke(options);
+
+    expect(report.toolCalls[0].name).toBe('get-todays-actions');
+    expect(report.failures).toEqual([]);
   }, 60_000);
 
   it('fails when the agent answers without the tool', async () => {

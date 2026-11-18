@@ -34,8 +34,9 @@ export const keyDigest = (key: string): string =>
 /** Signs that this process is the deployed service, not a laptop or CI. */
 function productionEnvironment(env: NodeJS.ProcessEnv): string | null {
   if (env.NODE_ENV === 'production') return 'NODE_ENV is "production"';
-  const railway = env.RAILWAY_ENVIRONMENT_NAME ?? env.RAILWAY_ENVIRONMENT;
-  if (railway) return `this is a Railway environment ("${railway}")`;
+  // Only a running deployment has these. RAILWAY_ENVIRONMENT_NAME is no
+  // signal: a laptop .env copied from `railway variables` carries it too.
+  if (env.RAILWAY_DEPLOYMENT_ID ?? env.RAILWAY_REPLICA_ID) return 'this is a running Railway deployment';
   return null;
 }
 
