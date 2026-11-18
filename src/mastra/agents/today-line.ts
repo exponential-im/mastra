@@ -11,7 +11,12 @@
  */
 const DAY = 24 * 60 * 60 * 1000;
 
-export function todayLine(now: Date = new Date()): string {
+/**
+ * `canAskUser: false` is for background runs: they have no get-my-time-zone
+ * tool and no person to ask, so the zone sentence is left out.
+ */
+export function todayLine(now: Date = new Date(), options: { canAskUser?: boolean } = {}): string {
+  const canAskUser = options.canAskUser ?? true;
   const weekday = (d: Date) => new Intl.DateTimeFormat("en-GB", { timeZone: "UTC", weekday: "long" }).format(d);
   const iso = (d: Date) => d.toISOString().slice(0, 10);
   const next = Array.from({ length: 7 }, (_, i) => new Date(now.getTime() + (i + 1) * DAY))
@@ -20,6 +25,10 @@ export function todayLine(now: Date = new Date()): string {
   return (
     `Today is ${weekday(now)}, ${iso(now)} (UTC). The next days: ${next}. ` +
     `Read weekdays from this line or from the user's local date when the conversation gives one; never work one out from memory. ` +
-    `When you propose or confirm a date, state it with its weekday.`
+    `When you propose or confirm a date, state it with its weekday.` +
+    (canAskUser
+      ? ` When the conversation does not state the user's local time and zone, call get-my-time-zone before you work with a clock time; ` +
+        `if it has no zone, ask the user once, never assume UTC.`
+      : "")
   );
 }

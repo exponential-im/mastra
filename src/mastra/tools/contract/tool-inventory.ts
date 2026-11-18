@@ -11,6 +11,7 @@
  * `skip` and the reason.
  */
 import type { ViolationRule } from './contract.js';
+import { getMyTimeZoneTool, setMyTimeZoneTool } from '../time-zone-tools.js';
 import {
   parseActionItemsTool,
   getActionItemsTool,
@@ -593,6 +594,17 @@ export const TOOL_INVENTORY: InventoryEntry[] = [
     ],
   },
   { tool: checkCalendarConnectionTool, writes: false, cases: [{ input: {} }] },
+  // The person's saved zone (ticket 972). Read only when the chat sent none.
+  {
+    tool: getMyTimeZoneTool,
+    writes: false,
+    cases: [{ input: {}, responses: { 'user.getTimezone': { timezone: 'Europe/Berlin' } } }],
+  },
+  {
+    tool: setMyTimeZoneTool,
+    writes: true,
+    cases: [{ input: { timeZone: 'Europe/Lisbon', userConfirmed: true } }],
+  },
   { tool: lookupContactByEmailTool, writes: false, cases: [{ input: { email: 'pat@example.com' } }] },
   {
     tool: createCrmContactTool,

@@ -75,7 +75,8 @@ describe('tool map coverage', () => {
     // action happens in the same short turn as creating it. + get-method and
     // get-context: every agent's startup line asks for them before
     // substantive work, so a generic-profile turn must always reach them.
-    expect(core.length).toBeLessThanOrEqual(15);
+    // + get-my-time-zone: the date line asks for it before any clock time.
+    expect(core.length).toBeLessThanOrEqual(16);
   });
 
   it('only uses declared toolset ids', () => {

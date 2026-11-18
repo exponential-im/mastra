@@ -106,6 +106,7 @@ import {
   listAssignableMembersTool,
   assignActionTool,
 } from '../tools/index.js';
+import { getMyTimeZoneTool, setMyTimeZoneTool } from '../tools/time-zone-tools.js';
 
 /**
  * Assistant Agent - Blank Canvas for User-Customized Personalities
@@ -443,6 +444,9 @@ export const assistantTools = {
     findAvailableTimeSlotsTool,
     createCalendarEventTool,
     checkCalendarConnectionTool,
+    // The person's saved time zone (ticket 972)
+    getMyTimeZoneTool,
+    setMyTimeZoneTool,
     // CRM tools
     searchCrmContactsTool,
     getCrmContactTool,
