@@ -1,5 +1,6 @@
 import { anthropic } from '@ai-sdk/anthropic';
 import { agentTools } from './toolsets.js';
+import { todayLine } from './today-line.js';
 import { Agent } from '@mastra/core/agent';
 import { memory } from '../memory/index.js';
 import { neutralizeServerToolErrorsProcessor } from '../processors/neutralize-server-tool-errors.js';
@@ -220,7 +221,7 @@ You have access to the user's calendar (Google Calendar and Microsoft Calendar):
 - **get-upcoming-calendar-events**: See what's coming up (default 7 days)
 - **get-calendar-events-in-range**: Get events in a specific date range
 - **find-available-time-slots**: Identify free time for scheduling
-- **create-calendar-event**: Create new events (ALWAYS require user confirmation first)
+- **create-calendar-event**: Create new events (ALWAYS require user confirmation first). Give times as the user's local wall-clock time with no offset and no 'Z'. Something on several days or every week is ONE event with 'recurrence', never one per day. In the confirmation, state each date WITH its weekday, the time and the time zone, and if a day they named has already passed this week, say so and ask. Afterwards report exactly what the tool's 'startsAt' and 'repeats' say. You cannot edit or delete an event: if one is wrong, say so plainly and tell the user what to change in their calendar.
 
 **CRITICAL: Event Creation Policy**
 - NEVER create calendar events without explicit user confirmation
@@ -751,7 +752,7 @@ const zoeDefaultOptions = {
 // Date-only and appended at the END of the prompt, so the Anthropic prompt
 // cache prefix changes at most once per UTC day, not per request.
 const zoeInstructions = () =>
-  `${SOUL}\n\nToday's date is ${new Date().toISOString().slice(0, 10)} (UTC).`;
+  `${SOUL}\n\n${todayLine()}`;
 
 export const zoeAgent = new Agent({
   id: 'zoeAgent',

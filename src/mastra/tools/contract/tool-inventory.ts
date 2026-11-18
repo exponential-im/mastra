@@ -577,6 +577,19 @@ export const TOOL_INVENTORY: InventoryEntry[] = [
           userConfirmed: true,
         },
       },
+      // A repeating event on the person's clock: wall-clock times, a zone
+      // and a weekly rule (the German-practice report of 2026-11-18).
+      {
+        input: {
+          summary: 'German speaking practice',
+          startDateTime: '2026-11-18T08:30:00',
+          endDateTime: '2026-11-18T08:50:00',
+          timeZone: 'Europe/Berlin',
+          recurrence: { daysOfWeek: ['MO', 'WE', 'FR'] },
+          provider: 'google',
+          userConfirmed: true,
+        },
+      },
     ],
   },
   { tool: checkCalendarConnectionTool, writes: false, cases: [{ input: {} }] },
