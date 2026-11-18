@@ -3780,6 +3780,10 @@
             "type": "number",
             "minimum": 0,
             "maximum": 100
+          },
+          "period": {
+            "type": "string",
+            "pattern": "^(Q[1-4]|H[12]|Annual)-\\d{4}$"
           }
         },
         "required": [
