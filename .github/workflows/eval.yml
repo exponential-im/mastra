@@ -1,0 +1,81 @@
+name: Eval
+#
+# Real, billed model calls on the capped development key (ticket 962).
+# Today it runs the live smoke test: one turn of the Assistant agent with one
+# tool call. The golden eval set (ticket 961) joins this workflow.
+#
+# This is the ONLY workflow that may read ANTHROPIC_API_KEY_DEV, and it has
+# no pull_request or pull_request_target trigger on purpose: a pull request
+# from a fork can never start it, so it can never read the key. Starting it
+# by hand needs write access to this repository. Both rules are pinned by
+# src/mastra/smoke/eval-workflow.test.ts.
+#
+#   gh workflow run eval.yml --ref <branch>     # run a branch before merging
+#
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'src/mastra/agents/**'
+      - 'src/mastra/tools/**'
+      - 'src/mastra/smoke/**'
+      - 'src/mastra/utils/anthropic-*'
+      - 'package-lock.json'
+      - '.github/workflows/eval.yml'
+  schedule:
+    # Mondays 06:00 UTC: catches a model or API change nobody pushed.
+    - cron: '0 6 * * 1'
+
+permissions:
+  contents: read
+
+# One run at a time, and never cancel a run that is already spending.
+concurrency:
+  group: eval
+  cancel-in-progress: false
+
+jobs:
+  live-smoke:
+    name: Live smoke (Assistant, one tool call)
+    # Not on forks of the repository either: they have no key and no reason.
+    if: github.repository == 'exponential-im/mastra'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the development key is configured
+        id: key
+        env:
+          HAS_KEY: ${{ secrets.ANTHROPIC_API_KEY_DEV != '' }}
+        run: |
+          if [ "$HAS_KEY" = "true" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "::error::The ANTHROPIC_API_KEY_DEV secret is not set on this repository. See README.md, 'Running a real agent turn'."
+            exit 1
+          else
+            echo "::warning::Skipped: the ANTHROPIC_API_KEY_DEV secret is not set on this repository."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Node
+        if: steps.key.outputs.present == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        if: steps.key.outputs.present == 'true'
+        run: npm ci
+
+      - name: Run the live smoke test
+        if: steps.key.outputs.present == 'true'
+        env:
+          ANTHROPIC_API_KEY_DEV: ${{ secrets.ANTHROPIC_API_KEY_DEV }}
+          # Optional repository variable: SHA-256 of the production key, so
+          # the script refuses it if it is ever stored under the dev name.
+          ANTHROPIC_PRODUCTION_KEY_SHA256: ${{ vars.ANTHROPIC_PRODUCTION_KEY_SHA256 }}
+        run: npm run smoke:live -- --stub-app
