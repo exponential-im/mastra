@@ -16,12 +16,19 @@
             "type": "array",
             "items": {
               "type": "string"
+            },
+            "default": []
+          },
+          "emails": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "email"
             }
           }
         },
         "required": [
-          "actionId",
-          "userIds"
+          "actionId"
         ]
       }
     },
