@@ -35,6 +35,7 @@ import * as routing from '../tools/routing-tools.js';
 import * as run from '../tools/run-tools.js';
 import * as slack from '../tools/slack-tools.js';
 import * as tickets from '../tools/ticket-tools.js';
+import * as timeZone from '../tools/time-zone-tools.js';
 import * as tradescape from '../tools/tradescape-tools.js';
 import * as whatsapp from '../tools/whatsapp-tools.js';
 
@@ -103,7 +104,7 @@ function isTool(value: unknown): value is AnyTool {
 const EXPORT_NAMES = new Map<AnyTool, string>();
 for (const mod of [
   actionItems, agentGuidance, decisions, documents, email, featureIdeation, knowledge, meetingContext, notion,
-  okr, one2b, pm, projects, readingList, routing, run, slack, tickets, tradescape, whatsapp, core,
+  okr, one2b, pm, projects, readingList, routing, run, slack, tickets, timeZone, tradescape, whatsapp, core,
 ] as Array<Record<string, unknown>>) {
   for (const [name, value] of Object.entries(mod)) {
     if (isTool(value) && !EXPORT_NAMES.has(value)) EXPORT_NAMES.set(value, name);
@@ -221,6 +222,8 @@ export const PROBE_PLANS: readonly ProbePlan[] = [
   // Only get-calendar-events insists on a connected Google Calendar; the
   // others answer with no events when nothing is connected.
   plan('checkCalendarConnectionTool', core.checkCalendarConnectionTool, ['mastra.getAllCalendarConnectionStatus'], () => ({})),
+  // Reads the saved zone only when the turn carries none, as a canary turn does.
+  plan('getMyTimeZoneTool', timeZone.getMyTimeZoneTool, ['user.getTimezone'], () => ({})),
   plan('getCalendarEventsTool', core.getCalendarEventsTool, ['mastra.getCalendarEvents'], () => ({ timeframe: 'today' }), {
     skip: NEEDS_CALENDAR,
   }),

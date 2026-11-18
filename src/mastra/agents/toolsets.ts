@@ -76,6 +76,9 @@ export const TOOL_GROUPS: Record<string, ToolGroupId> = {
   getAllGoalsTool: 'core',
   getTodayCalendarEventsTool: 'core',
   getUpcomingCalendarEventsTool: 'core',
+  // The person's time zone: every agent's date line asks for it before a
+  // clock time, on every surface (ticket 972). Changing it rides with calendar.
+  getMyTimeZoneTool: 'core',
   // agent guidance: the startup line tells every agent to load the method
   // and scoped context before substantive work, so it must be on the map whatever the turn
   getMethodTool: 'core',
@@ -124,6 +127,7 @@ export const TOOL_GROUPS: Record<string, ToolGroupId> = {
   findAvailableTimeSlotsTool: 'calendar',
   createCalendarEventTool: 'calendar',
   checkCalendarConnectionTool: 'calendar',
+  setMyTimeZoneTool: 'calendar',
 
   searchCrmContactsTool: 'crm',
   getCrmContactTool: 'crm',

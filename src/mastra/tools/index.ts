@@ -20,6 +20,7 @@ import {
 } from "./calendar-time.js";
 import { asAppContext } from "../types/request-context.js";
 import { isForbidden } from "./routing-tools.js";
+import { resolveUserTimeZone } from "./time-zone-tools.js";
 import { looseBoolean, looseNumber, looseEnum, looseStringArray, looseEnumArray, looseAttendees, normalizeDateTime, resolveDateRange } from "./zod-loose.js";
 
 interface GeocodingResponse {
@@ -1837,14 +1838,14 @@ export const createCalendarEventTool = createTool({
     }
 
     // The zone the times are read in: the one the model named, else the
-    // person's own (sent by the chat). A wall-clock time with neither is
-    // refused by resolveEventInstant; it is never read as UTC.
-    const requestedZone = inputData.timeZone?.trim();
+    // person's own: sent by the web chat, or read from their saved profile on
+    // Slack, WhatsApp and other surfaces that send none. A wall-clock time with
+    // no zone is refused by resolveEventInstant; it is never read as UTC.
+    const requestedZone = inputData.timeZone?.trim() || undefined;
     if (requestedZone && !isValidTimeZone(requestedZone)) {
       throw new Error(`"${requestedZone}" is not a time zone I know. Use an IANA name such as "Europe/Berlin".`);
     }
-    const contextZone = requestContext?.get("timezone");
-    const timeZone = requestedZone ?? (isValidTimeZone(contextZone) ? contextZone : undefined);
+    const timeZone = requestedZone ?? (await resolveUserTimeZone(requestContext)).zone ?? undefined;
 
     let start = resolveEventInstant(inputData.startDateTime, timeZone, "startDateTime");
     let end = resolveEventInstant(inputData.endDateTime, timeZone, "endDateTime");

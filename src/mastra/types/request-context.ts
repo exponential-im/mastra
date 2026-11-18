@@ -6,8 +6,13 @@ export interface AppRequestContextValues {
   workspaceId: string;
   projectId: string;
   whatsappSession: string;
-  /** The person's IANA time zone, when the chat surface sent one. */
+  /**
+   * The person's IANA time zone: sent by the web chat (saved zone, else the
+   * browser's), or read from their profile by `resolveUserTimeZone`.
+   */
   timezone: string;
+  /** "profile" when `timezone` was read from the person's saved profile. */
+  timezoneSource: string;
 }
 
 export type AppRequestContext = RequestContext<AppRequestContextValues>;
