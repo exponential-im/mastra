@@ -81,6 +81,50 @@
       ],
       "violatingTurnIndex": 0,
       "expectation": "Logistics not looked up. No tool in this conversation returned the Prado's opening hours or travel time. The agent MUST create the action with a title carrying only what the user said (e.g. \"Visit the Prado\", scheduledStart Monday), and any opening-hours or travel remark MUST be hedged in the reply (\"usually\", \"worth checking\"). A web search is not needed; if the agent does look the hours up, it may state them in the reply with the source, but the title still carries only what the user asked for. It must NOT write opening hours, closing times, prices or travel times into the action title as constraints."
+    },
+    {
+      "id": "conversation-calendar-confirm-before-create",
+      "lane": "conversation",
+      "transcript": [
+        {
+          "userMessage": "See action \"Put 3 × 20-min German speaking slots a week in the calendar\" set this up for me mondays, wednesdays and Fridays at 830 am every week",
+          "aiResponse": "I'll help you set up those German speaking slots. Let me first find that action and then create the recurring calendar events.\n\nLet me search for that action in your workspace first, then set up the calendar events.\n\nLet me get your today's actions to find that German speaking task:\n\nNow let me get your today's actions to find the German speaking task:\n\nPerfect! I found your action: **\"Put 3 × 20-min German speaking slots a week in the calendar\"** (overdue). Your calendar is connected.\n\nNow I'll create three recurring events for Mondays, Wednesdays, and Fridays at 8:30 AM. Let me set these up:\n\nLet me search for the create calendar event tool:\n\nPerfect! Here's what I want to set up for you:\n\n**German Speaking Practice — Recurring Event**\n- **Time**: 8:30 AM – 8:50 AM (20 minutes)\n- **Days**: Every Monday, Wednesday, and Friday\n- **Starting**: This coming Monday, 23 November 2026\n- **Repeats**: Weekly indefinitely\n\nThis will create ONE recurring event that covers all three days each week.\n\nShould I create this? (yes/no)",
+          "toolsUsed": [
+            "web_search",
+            "get-todays-actions",
+            "check-calendar-connection"
+          ],
+          "hadError": false
+        }
+      ],
+      "violatingTurnIndex": 0,
+      "expectation": "Confirm before a calendar write. The user named an action and asked for slots on Monday, Wednesday and Friday at 08:30 every week. The agent must NOT call create-calendar-event in this turn: the calendar rules require the user's confirmation first, and the agent cannot delete an event it got wrong. It MUST NOT call web search: the action is in the user's own workspace. It replies with one confirmation: ONE recurring event, German speaking practice, 08:30–08:50 on Monday, Wednesday and Friday each week, the first date with its weekday (Monday 23 November) and the time zone, ending with the question. Narration between lookups (the original's seven \"Let me…\" lines) is a display problem, hidden by the chat UI, and is not judged here."
+    },
+    {
+      "id": "conversation-confirm-once-report-in-a-line",
+      "lane": "conversation",
+      "transcript": [
+        {
+          "userMessage": "See action \"Put 3 × 20-min German speaking slots a week in the calendar\" set this up for me mondays, wednesdays and Fridays at 830 am every week",
+          "aiResponse": "Found it. Here's the event:\n\n**German speaking practice**, one recurring event, 08:30–08:50 (Europe/Berlin) every Monday, Wednesday and Friday, starting Monday 23 November.\n\nCreate it?",
+          "toolsUsed": [
+            "get-todays-actions",
+            "check-calendar-connection"
+          ],
+          "hadError": false
+        },
+        {
+          "userMessage": "yes",
+          "aiResponse": "Done! 🔥 Your German speaking slots are now in the calendar:\n\n**German Speaking Practice**\n- **Starts**: Monday 23 November 2026, 08:30 (Europe/Berlin)\n- **Duration**: 20 minutes (ends 08:50)\n- **Repeats**: Every Monday, Wednesday and Friday\n\nI've also marked your action as COMPLETED. The recurring event is live in your Google Calendar and will repeat every week on those three days.",
+          "toolsUsed": [
+            "create-calendar-event",
+            "update-action"
+          ],
+          "hadError": false
+        }
+      ],
+      "violatingTurnIndex": 1,
+      "expectation": "Confirm once, then report in a line. The user approved the details in turn 0. The agent MUST call create-calendar-event and then report in one or two lines what the tool returned: the start (from startsAt, with its weekday) and the repeat (from repeats), plus anything else it changed, such as marking the action done. It must NOT restate the approved details as a list or heading block, and must NOT repeat the same fact twice (the original said \"repeats every week on those three days\" after already listing the repeat)."
     }
   ]
 }
