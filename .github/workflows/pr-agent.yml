@@ -18,9 +18,20 @@ on:
     types: [created]
 jobs:
   pr_agent_job:
-    # Skip when the event was triggered by a bot (e.g. PR-Agent's own comments)
-    # to avoid an infinite review loop, and skip comments on non-PR issues.
-    if: ${{ github.event.sender.type != 'Bot' && (github.event_name != 'issue_comment' || github.event.issue.pull_request) }}
+    # Runs only when it can spend the OpenRouter key on someone we trust:
+    #   - never for a bot (e.g. PR-Agent's own comments), to avoid an infinite loop;
+    #   - a pull_request only from a branch in this repo. Fork PRs get no secrets,
+    #     so the review would fail, and the gate never merges a fork anyway;
+    #   - a comment only on a PR, and only from an owner, member or collaborator.
+    #     The repo is public, so anyone could otherwise comment `/review` or
+    #     `/ask` and spend the key's credit.
+    if: >-
+      github.event.sender.type != 'Bot' && (
+        (github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository) ||
+        (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
+          contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association))
+      )
     runs-on: ubuntu-latest
     permissions:
       issues: write
@@ -73,14 +84,21 @@ jobs:
             echo "No PR number on this event; nothing to verify."
             exit 0
           fi
-          # Only comments from this run — otherwise one bad run would keep the
-          # check red on every later push to the same PR.
+          # Failure notices that PR-Agent wrote during this run:
+          #   - by updated_at, not created_at. persistent_comment edits PR-Agent's
+          #     existing comment on later pushes, so created_at stays old.
+          #   - only github-actions[bot]'s comments, and only where the notice is the
+          #     start of the body. A person's comment, or a review finding that quotes
+          #     the notice, can't turn the check red.
+          # A notice from an earlier run is never edited again, so it can't keep the
+          # check red on later pushes.
           gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --paginate \
-            --jq "[.[] | select(.created_at >= \"${SINCE}\") | .body] | .[]" \
-            > /tmp/pr_agent_comments.txt
-          if grep -qiE 'failed to (generate|review)' /tmp/pr_agent_comments.txt; then
+            --jq ".[] | select(.updated_at >= \"${SINCE}\" and .user.login == \"github-actions[bot]\")
+                       | select(.body | test(\"^\\\\s*failed to (generate|review)\"; \"i\")) | .body" \
+            > /tmp/pr_agent_failures.txt
+          if [ -s /tmp/pr_agent_failures.txt ]; then
             echo "::error title=PR-Agent produced no review::The action ran but every model call failed, so this PR was NOT reviewed. Check the step log for the provider error — it is usually an exhausted credit balance on the OPENROUTER_API_KEY secret."
-            grep -iE 'failed to (generate|review)' /tmp/pr_agent_comments.txt | head -5
+            head -5 /tmp/pr_agent_failures.txt
             exit 1
           fi
           echo "PR-Agent posted no failure notice — the review ran."
