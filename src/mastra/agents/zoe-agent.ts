@@ -1,5 +1,6 @@
 import { anthropic } from '@ai-sdk/anthropic';
 import { agentTools } from './toolsets.js';
+import { todayLine } from './today-line.js';
 import { Agent } from '@mastra/core/agent';
 import { memory } from '../memory/index.js';
 import { neutralizeServerToolErrorsProcessor } from '../processors/neutralize-server-tool-errors.js';
@@ -119,6 +120,7 @@ import {
   listAssignableMembersTool,
   assignActionTool,
 } from '../tools/index.js';
+import { getMyTimeZoneTool, setMyTimeZoneTool } from '../tools/time-zone-tools.js';
 
 /**
  * Zoe - The Exponential AI Companion
@@ -220,7 +222,7 @@ You have access to the user's calendar (Google Calendar and Microsoft Calendar):
 - **get-upcoming-calendar-events**: See what's coming up (default 7 days)
 - **get-calendar-events-in-range**: Get events in a specific date range
 - **find-available-time-slots**: Identify free time for scheduling
-- **create-calendar-event**: Create new events (ALWAYS require user confirmation first)
+- **create-calendar-event**: Create new events (ALWAYS require user confirmation first). Give times as the user's local wall-clock time with no offset and no 'Z'. Something on several days or every week is ONE event with 'recurrence', never one per day. In the confirmation, state each date WITH its weekday, the time and the time zone, and if a day they named has already passed this week, say so and ask. Afterwards report exactly what the tool's 'startsAt' and 'repeats' say. You cannot edit or delete an event: if one is wrong, say so plainly and tell the user what to change in their calendar.
 
 **CRITICAL: Event Creation Policy**
 - NEVER create calendar events without explicit user confirmation
@@ -350,7 +352,8 @@ You can search and browse the user's WhatsApp messages:
 ### Meetings & Call Transcriptions
 You can search and analyze meeting transcriptions:
 - **get-meeting-transcriptions**: Retrieve meeting transcriptions, optionally filtered by project, date range, participants, or meeting type. Pass 'includeTranscript: false' for list-style queries (titles + dates only — fast); leave true when you need to read or summarize content. The active workspace is auto-injected from request context — meetings are already scoped to the current workspace.
-- **query-meeting-context**: Semantic search across meeting content — finds relevant discussions, decisions, action items by query
+- **query-meeting-context**: Semantic search across meeting content — finds relevant discussions, decisions, action items by query. Pass 'transcriptionId' to search inside one meeting.
+- **One specific meeting** (the page context names a Transcription ID, or you found the meeting in a list): pass that 'transcriptionId' to get-meeting-transcriptions and you get the whole transcript. A transcript marked 'transcriptTruncated: true' is a partial read: never say something was not said in a meeting from a partial read or from empty search results. Read the whole meeting first, or say you only read part of it.
 - **get-meeting-insights**: Extract structured insights (decisions, action items, deadlines, blockers, milestones) from meetings over a time period
 
 **Usage patterns:**
@@ -507,6 +510,7 @@ Use this to decide which tool to call:
 | "Show me recent meeting transcriptions" | get-meeting-transcriptions with 'includeTranscript: false' |
 | "What meetings did I have yesterday / on [day]?" / "What meetings have I had this week?" | get-calendar-events-in-range + get-meeting-transcriptions ('includeTranscript: false') for the same range → merge, one line per meeting, recorded ones marked |
 | "Summarize my last meeting" / "What was decided in the [name] call?" | get-meeting-transcriptions with 'includeTranscript: true' |
+| "What did [person] say in this meeting?" / "Did they mention X?" (on a meeting page, or once you know the meeting) | get-meeting-transcriptions with that meeting's 'transcriptionId' (whole transcript) — answer from what was said, not from the summary |
 | "What decisions were made last week?" / "Any blockers from meetings?" | get-meeting-insights with appropriate insightTypes |
 | "Search for..." / "What's the latest on..." / "Look up..." / "What is [topic]?" | web search → web fetch for deeper reading |
 
@@ -652,6 +656,9 @@ export const zoeTools = {
     findAvailableTimeSlotsTool,
     createCalendarEventTool,
     checkCalendarConnectionTool,
+    // The person's saved time zone (ticket 972)
+    getMyTimeZoneTool,
+    setMyTimeZoneTool,
     // CRM tools
     searchCrmContactsTool,
     getCrmContactTool,
@@ -749,7 +756,7 @@ const zoeDefaultOptions = {
 // Date-only and appended at the END of the prompt, so the Anthropic prompt
 // cache prefix changes at most once per UTC day, not per request.
 const zoeInstructions = () =>
-  `${SOUL}\n\nToday's date is ${new Date().toISOString().slice(0, 10)} (UTC).`;
+  `${SOUL}\n\n${todayLine()}`;
 
 export const zoeAgent = new Agent({
   id: 'zoeAgent',

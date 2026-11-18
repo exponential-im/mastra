@@ -8,8 +8,20 @@ import {
   authenticatedTrpcQuery,
 } from "../utils/authenticated-fetch.js";
 import { prepareUntrustedContent, auditWriteAction } from "../utils/content-safety.js";
+import { fitTranscript, transcriptLimit } from "./meeting-transcript-budget.js";
+import {
+  WEEKDAYS,
+  alignToFirstOccurrence,
+  describeInstant,
+  describeRecurrence,
+  isValidTimeZone,
+  resolveEventInstant,
+  weeklyRule,
+  workDayWindow,
+} from "./calendar-time.js";
 import { asAppContext } from "../types/request-context.js";
 import { isForbidden } from "./routing-tools.js";
+import { resolveUserTimeZone } from "./time-zone-tools.js";
 import { looseBoolean, looseNumber, looseEnum, looseStringArray, looseEnumArray, looseAttendees, normalizeDateTime, resolveDateRange } from "./zod-loose.js";
 
 interface GeocodingResponse {
@@ -1059,8 +1071,14 @@ export const getAllProjectsTool = createTool({
 export const getMeetingTranscriptionsTool = createTool({
   id: "get-meeting-transcriptions",
   description:
-    "Get meeting and call transcriptions. Use this for any request about calls, meetings, phone conversations, or video calls. Supports filtering by project, date range, participants, or meeting type. Set `includeTranscript: false` for list-style queries (titles + dates only); leave true when you need to read or summarize content. The active workspaceId is injected automatically from request context — meetings are scoped to that workspace.",
+    "Get meeting and call transcriptions. Use this for any request about calls, meetings, phone conversations, or video calls. Supports filtering by project, date range, participants, or meeting type. To read ONE meeting (e.g. the one the user is viewing), pass its `transcriptionId`: the whole transcript comes back. Without it, the latest few meetings share a character budget and long transcripts are cut; a cut one has `transcriptTruncated: true` and a `transcriptNote` saying how to read the rest. Never conclude that something was not said from a truncated transcript. Set `includeTranscript: false` for list-style queries (titles + dates only); leave true when you need to read or summarize content. The active workspaceId is injected automatically from request context — meetings are scoped to that workspace.",
   inputSchema: z.object({
+    transcriptionId: z
+      .string()
+      .optional()
+      .describe(
+        "ID of one specific meeting to fetch, whole. Use it whenever you know which meeting is meant (the page context gives it on a meeting page; list results give it as `id`)."
+      ),
     projectId: z.string().optional().describe("Filter by specific project ID"),
     startDate: z
       .string()
@@ -1092,8 +1110,9 @@ export const getMeetingTranscriptionsTool = createTool({
     maxTranscriptLength: looseNumber(z
       .number())
       .optional()
-      .default(2000)
-      .describe("Max characters per transcript when truncating (default: 2000)"),
+      .describe(
+        "Max characters per transcript. Omit it: one meeting fetched by transcriptionId is returned whole, and several meetings share a budget of about 60,000 characters. Set it only to read less."
+      ),
   }),
   outputSchema: z.object({
     transcriptions: z.array(
@@ -1107,6 +1126,9 @@ export const getMeetingTranscriptionsTool = createTool({
         projectId: z.string().nullish(),
         duration: z.number().nullish(),
         summary: z.string().nullish(),
+        transcriptLength: z.number().optional(),
+        transcriptTruncated: z.boolean().optional(),
+        transcriptNote: z.string().optional(),
       })
     ),
     total: z.number(),
@@ -1114,6 +1136,7 @@ export const getMeetingTranscriptionsTool = createTool({
   execute: async (inputData, ctx) => {
     const requestContext = asAppContext(ctx.requestContext);
     const {
+      transcriptionId,
       projectId,
       startDate,
       endDate,
@@ -1123,7 +1146,6 @@ export const getMeetingTranscriptionsTool = createTool({
       includeTranscript,
       truncateTranscript,
     } = inputData;
-    const maxTranscriptLength = inputData.maxTranscriptLength ?? 2000;
 
     console.log("🔍 [getMeetingTranscriptions] Starting execution");
 
@@ -1141,6 +1163,7 @@ export const getMeetingTranscriptionsTool = createTool({
       "mastra.getMeetingTranscriptions",
       {
         ...(workspaceId ? { workspaceId } : {}),
+        ...(transcriptionId ? { transcriptionId } : {}),
         projectId,
         startDate,
         endDate,
@@ -1152,14 +1175,21 @@ export const getMeetingTranscriptionsTool = createTool({
       { authToken, sessionId, userId }
     );
 
-    // Truncate transcripts to prevent context overflow
-    if (truncateTranscript && result.transcriptions) {
-      result.transcriptions = result.transcriptions.map((t: any) => ({
-        ...t,
-        transcript: t.transcript && t.transcript.length > maxTranscriptLength
-          ? t.transcript.slice(0, maxTranscriptLength) + '...[truncated]'
-          : t.transcript,
-      }));
+    // Fit transcripts to the context: one targeted meeting comes back whole,
+    // several share a budget, and every cut is flagged (see
+    // meeting-transcript-budget.ts). `truncateTranscript: false` opts out.
+    if (result.transcriptions) {
+      const withText = result.transcriptions.filter((t: any) => t.transcript).length;
+      const limit = truncateTranscript === false
+        ? Number.POSITIVE_INFINITY
+        : transcriptLimit({
+            count: withText,
+            targeted: Boolean(transcriptionId),
+            explicitMax: inputData.maxTranscriptLength,
+          });
+      result.transcriptions = result.transcriptions.map((t: any) =>
+        t.transcript ? { ...t, ...fitTranscript(t.id, t.transcript, limit) } : t
+      );
     }
 
     // Wrap transcript content — meeting transcripts are untrusted external content
@@ -1180,11 +1210,15 @@ export const getMeetingTranscriptionsTool = createTool({
 export const queryMeetingContextTool = createTool({
   id: "query-meeting-context",
   description:
-    "Semantic search across meeting and call transcriptions to find decisions, action items, deadlines, and project discussions. Use this for searching specific topics discussed in calls or meetings.",
+    "Semantic search across meeting and call transcriptions to find decisions, action items, deadlines, and project discussions. Use this for searching specific topics discussed in calls or meetings. Pass `transcriptionId` to search inside one meeting (e.g. the one the user is viewing). Results are excerpts: an empty result means no excerpt matched, not that the topic never came up, so read the meeting with get-meeting-transcriptions before saying something was not said. The active workspaceId is injected automatically from request context.",
   inputSchema: z.object({
     query: z
       .string()
       .describe("Search query for finding relevant meeting content"),
+    transcriptionId: z
+      .string()
+      .optional()
+      .describe("Search only inside this one meeting"),
     projectId: z
       .string()
       .optional()
@@ -1231,18 +1265,35 @@ export const queryMeetingContextTool = createTool({
   }),
   execute: async (inputData, ctx) => {
     const requestContext = asAppContext(ctx.requestContext);
-    const { query, projectId, dateRange, topK } = inputData;
+    const { query, transcriptionId, projectId, dateRange, topK } = inputData;
     const authToken = requestContext?.get("authToken");
     const sessionId = requestContext?.get("whatsappSession");
     const userId = requestContext?.get("userId");
+    const workspaceId = requestContext?.get("workspaceId");
 
     if (!authToken) {
       throw new Error("No authentication token available");
     }
+    // The app requires a workspace for every knowledge search (it is the
+    // tenant boundary). This tool went six months without sending one and
+    // 400'd on every call; fail here, in words the model can act on, if the
+    // conversation genuinely has none.
+    if (!workspaceId) {
+      throw new Error(
+        "Meeting search needs a workspace and this conversation has none. Use get-meeting-transcriptions to read meetings instead."
+      );
+    }
 
     const { data } = await authenticatedTrpcCall(
       "mastra.queryMeetingContext",
-      { query, projectId, dateRange, topK },
+      {
+        query,
+        workspaceId,
+        ...(transcriptionId ? { transcriptionId } : {}),
+        projectId,
+        dateRange,
+        topK,
+      },
       { authToken, sessionId, userId }
     );
 
@@ -1637,24 +1688,32 @@ export const getCalendarEventsInRangeTool = createTool({
 
 export const findAvailableTimeSlotsTool = createTool({
   id: "find-available-time-slots",
-  description: "Find available time slots in the user's calendar. Useful for scheduling new events. Specify date and work hours, returns free slots.",
+  description: "Find available time slots in the user's calendar. Useful for scheduling new events. Specify the date and work hours on the user's own clock; returns free slots. Report slots to the user as `startsAt`/`endsAt` say (their zone), never the raw UTC `start`/`end`. If it returns `error`, nothing was checked: do what it says.",
   inputSchema: z.object({
-    date: z.string().describe("Date to check in YYYY-MM-DD format"),
-    startHour: looseNumber(z.number().min(0).max(23)).default(9).describe("Start of work day (hour, 0-23)"),
-    endHour: looseNumber(z.number().min(0).max(23)).default(17).describe("End of work day (hour, 0-23)"),
+    date: z.string().describe("Date to check in YYYY-MM-DD format, on the user's clock"),
+    startHour: looseNumber(z.number().min(0).max(23)).default(9).describe("Start of work day (hour, 0-23) on the user's clock"),
+    endHour: looseNumber(z.number().min(0).max(23)).default(17).describe("End of work day (hour, 0-23) on the user's clock"),
     slotDurationMinutes: looseNumber(z.number()).default(30).describe("Desired slot duration in minutes"),
+    timeZone: z.string().optional().describe("IANA time zone, e.g. \"Europe/Berlin\". Omit to use the user's own zone; set it only when they name a different one."),
   }),
   outputSchema: z.object({
     availableSlots: z.array(z.object({
       start: z.string(),
       end: z.string(),
       durationMinutes: z.number(),
+      startsAt: z.string().optional(),
+      endsAt: z.string().optional(),
     })),
     busySlots: z.array(z.object({
       start: z.string(),
       end: z.string(),
       summary: z.string(),
+      startsAt: z.string().optional(),
+      endsAt: z.string().optional(),
     })),
+    timeZone: z.string().optional(),
+    workDay: z.string().optional(),
+    error: z.string().optional(),
   }),
   execute: async (inputData, ctx) => {
     const requestContext = asAppContext(ctx.requestContext);
@@ -1666,16 +1725,34 @@ export const findAvailableTimeSlotsTool = createTool({
       throw new Error("No authentication token available");
     }
 
-    // Get events for the specified date
     const startHour = inputData.startHour ?? 9;
     const endHour = inputData.endHour ?? 17;
     const slotDurationMinutes = inputData.slotDurationMinutes ?? 30;
-    const dateObj = new Date(inputData.date);
-    const startOfDay = new Date(dateObj);
-    startOfDay.setHours(startHour, 0, 0, 0);
 
-    const endOfDay = new Date(dateObj);
-    endOfDay.setHours(endHour, 0, 0, 0);
+    // The work day is on the person's clock: the zone the model named, else
+    // their own (sent by the chat, or saved in their profile). 9 to 17 built
+    // with the server's setHours was 9 to 17 UTC, an hour off for Berlin.
+    // With no zone the tool asks; it never assumes UTC.
+    const requestedZone = inputData.timeZone?.trim() || undefined;
+    if (requestedZone && !isValidTimeZone(requestedZone)) {
+      throw new Error(`"${requestedZone}" is not a time zone I know. Use an IANA name such as "Europe/Berlin".`);
+    }
+    let timeZone = requestedZone;
+    if (!timeZone) {
+      const resolved = await resolveUserTimeZone(requestContext);
+      if (resolved.zone === null) {
+        return {
+          availableSlots: [],
+          busySlots: [],
+          error: resolved.unreadable
+            ? "Not checked: the user's saved time zone could not be read, so the work hours cannot be placed on their clock. Ask the user for their time zone and call again with timeZone (an IANA name such as \"Europe/Berlin\"). Do not assume UTC."
+            : "Not checked: the user's time zone is not known, so the work hours cannot be placed on their clock. Ask the user for their time zone, once, and call again with timeZone (an IANA name such as \"Europe/Berlin\"). Offer to save it with set-my-time-zone so you need not ask again; without that tool, point them to Settings → Profile. Do not assume UTC.",
+        };
+      }
+      timeZone = resolved.zone;
+    }
+
+    const { start: startOfDay, end: endOfDay } = workDayWindow(inputData.date, startHour, endHour, timeZone);
 
     const { data } = await authenticatedTrpcCall(
       "mastra.getCalendarEventsInRange",
@@ -1693,12 +1770,22 @@ export const findAvailableTimeSlotsTool = createTool({
         new Date(a.start.dateTime).getTime() - new Date(b.start.dateTime).getTime()
       );
 
+    const slot = (start: Date, end: Date) => ({
+      start: start.toISOString(),
+      end: end.toISOString(),
+      durationMinutes: Math.floor((end.getTime() - start.getTime()) / 60000),
+      startsAt: describeInstant(start, timeZone),
+      endsAt: describeInstant(end, timeZone),
+    });
+
     // Find gaps between events
     const availableSlots = [];
     const busySlots = events.map((e: any) => ({
       start: e.start.dateTime,
       end: e.end.dateTime,
       summary: e.summary,
+      startsAt: describeInstant(new Date(e.start.dateTime), timeZone),
+      endsAt: describeInstant(new Date(e.end.dateTime), timeZone),
     }));
 
     let currentTime = startOfDay;
@@ -1710,11 +1797,7 @@ export const findAvailableTimeSlotsTool = createTool({
       // Check gap before this event
       const gapMinutes = (eventStart.getTime() - currentTime.getTime()) / 60000;
       if (gapMinutes >= slotDurationMinutes) {
-        availableSlots.push({
-          start: currentTime.toISOString(),
-          end: eventStart.toISOString(),
-          durationMinutes: Math.floor(gapMinutes),
-        });
+        availableSlots.push(slot(currentTime, eventStart));
       }
 
       currentTime = eventEnd > currentTime ? eventEnd : currentTime;
@@ -1723,25 +1806,35 @@ export const findAvailableTimeSlotsTool = createTool({
     // Check gap after last event
     const finalGapMinutes = (endOfDay.getTime() - currentTime.getTime()) / 60000;
     if (finalGapMinutes >= slotDurationMinutes) {
-      availableSlots.push({
-        start: currentTime.toISOString(),
-        end: endOfDay.toISOString(),
-        durationMinutes: Math.floor(finalGapMinutes),
-      });
+      availableSlots.push(slot(currentTime, endOfDay));
     }
 
-    return { availableSlots, busySlots };
+    return {
+      availableSlots,
+      busySlots,
+      timeZone,
+      workDay: `${describeInstant(startOfDay, timeZone)} to ${describeInstant(endOfDay, timeZone)}`,
+    };
   },
 });
 
 export const createCalendarEventTool = createTool({
   id: "create-calendar-event",
-  description: "Create a new calendar event. CRITICAL: ALWAYS require explicit user confirmation before calling this tool. Never create events autonomously.",
+  description: "Create a new calendar event. CRITICAL: ALWAYS require explicit user confirmation before calling this tool. Never create events autonomously. TIMES: give the user's local wall-clock time with NO offset and NO 'Z' (\"2026-11-18T08:30:00\"); it is read in the user's time zone. REPEATING: for something that happens on several days or every week, create ONE event with `recurrence`, never one event per day. AFTER: tell the user exactly what `startsAt` and `repeats` say, including the weekday, and pass on any `warning`. You cannot edit or delete an event once created, so get the day, time and zone right in the confirmation.",
   inputSchema: z.object({
     summary: z.string().describe("Event title/summary"),
     description: z.string().optional().describe("Event description"),
-    startDateTime: z.string().describe("Start date/time in ISO 8601 format"),
-    endDateTime: z.string().describe("End date/time in ISO 8601 format"),
+    startDateTime: z.string().describe("Start as local wall-clock time with no offset, e.g. \"2026-11-18T08:30:00\". For a repeating event, any date on or shortly before the first occurrence."),
+    endDateTime: z.string().describe("End as local wall-clock time with no offset, e.g. \"2026-11-18T08:50:00\""),
+    timeZone: z.string().optional().describe("IANA time zone, e.g. \"Europe/Berlin\". Omit to use the user's own zone; set it only when they name a different one."),
+    recurrence: z
+      .object({
+        daysOfWeek: looseEnumArray(WEEKDAYS).describe("Days it repeats on: MO, TU, WE, TH, FR, SA, SU"),
+        until: z.string().optional().describe("Last date it may occur, \"YYYY-MM-DD\". Omit for no end."),
+        count: looseNumber(z.number()).optional().describe("Or the number of occurrences. Ignored when `until` is set."),
+      })
+      .optional()
+      .describe("Make it a weekly repeating event. \"Mon, Wed and Fri at 8:30\" is ONE event with daysOfWeek [MO, WE, FR]."),
     location: z.string().optional().describe("Event location"),
     // looseAttendees tolerates the shapes models actually emit (bare email
     // string, array of strings, "Name <email>", single object, null).
@@ -1758,6 +1851,11 @@ export const createCalendarEventTool = createTool({
     }),
     provider: z.string(),
     error: z.string().optional(),
+    startsAt: z.string().optional(),
+    endsAt: z.string().optional(),
+    timeZone: z.string().optional(),
+    repeats: z.string().optional(),
+    warning: z.string().optional(),
   }),
   execute: async (inputData, ctx) => {
     const requestContext = asAppContext(ctx.requestContext);
@@ -1773,10 +1871,45 @@ export const createCalendarEventTool = createTool({
       throw new Error("No authentication token available");
     }
 
+    // The zone the times are read in: the one the model named, else the
+    // person's own: sent by the web chat, or read from their saved profile on
+    // Slack, WhatsApp and other surfaces that send none. A wall-clock time with
+    // no zone is refused by resolveEventInstant; it is never read as UTC.
+    const requestedZone = inputData.timeZone?.trim() || undefined;
+    if (requestedZone && !isValidTimeZone(requestedZone)) {
+      throw new Error(`"${requestedZone}" is not a time zone I know. Use an IANA name such as "Europe/Berlin".`);
+    }
+    const timeZone = requestedZone ?? (await resolveUserTimeZone(requestContext)).zone ?? undefined;
+
+    let start = resolveEventInstant(inputData.startDateTime, timeZone, "startDateTime");
+    let end = resolveEventInstant(inputData.endDateTime, timeZone, "endDateTime");
+    if (end.getTime() <= start.getTime()) {
+      throw new Error("endDateTime must be after startDateTime.");
+    }
+
+    const warnings: string[] = [];
+    let rule: string | undefined;
+    if (inputData.recurrence) {
+      if (!timeZone) {
+        throw new Error(
+          'A repeating event needs a time zone and the user\'s zone is not known. Ask the user and pass it as timeZone (e.g. "Europe/Berlin").',
+        );
+      }
+      rule = weeklyRule(inputData.recurrence);
+      const aligned = alignToFirstOccurrence(start, end, timeZone, inputData.recurrence.daysOfWeek);
+      start = aligned.start;
+      end = aligned.end;
+    }
+    if (start.getTime() < Date.now()) {
+      warnings.push(
+        `The ${rule ? "first occurrence" : "event"} starts in the past (${describeInstant(start, timeZone)}). Tell the user and ask whether they meant a later date.`,
+      );
+    }
+
     auditWriteAction({
       tool: 'create-calendar-event',
       userId: userId as string | undefined,
-      params: { summary: inputData.summary, start: inputData.startDateTime, attendees: inputData.attendees?.length ?? 0 },
+      params: { summary: inputData.summary, start: start.toISOString(), timeZone: timeZone ?? 'none', recurrence: rule ?? 'none', attendees: inputData.attendees?.length ?? 0 },
       timestamp: new Date().toISOString(),
       userConfirmed: inputData.userConfirmed,
     });
@@ -1787,22 +1920,36 @@ export const createCalendarEventTool = createTool({
         summary: inputData.summary,
         description: inputData.description,
         // The backend validates with z.string().datetime(), which rejects
-        // offset timestamps ("+02:00") and date-only strings; normalize to
-        // canonical UTC ISO so a valid instant is never bounced.
+        // offset timestamps ("+02:00"), so the instant goes as canonical UTC
+        // ISO. The zone travels beside it: the calendar shows the event in
+        // that zone and expands a repeating one on that zone's clock.
         start: {
-          dateTime: normalizeDateTime(inputData.startDateTime, "start"),
+          dateTime: start.toISOString(),
+          ...(timeZone ? { timeZone } : {}),
         },
         end: {
-          dateTime: normalizeDateTime(inputData.endDateTime, "end"),
+          dateTime: end.toISOString(),
+          ...(timeZone ? { timeZone } : {}),
         },
         location: inputData.location,
         attendees: inputData.attendees,
         provider: inputData.provider,
+        ...(rule ? { recurrence: [rule] } : {}),
       },
       { authToken, sessionId, userId }
     );
 
-    return { event: data.event, provider: data.provider };
+    // What was really created, in the person's zone, for the model to repeat
+    // back. Without it the model reports what it meant to create.
+    return {
+      event: data.event,
+      provider: data.provider,
+      startsAt: describeInstant(start, timeZone),
+      endsAt: describeInstant(end, timeZone),
+      ...(timeZone ? { timeZone } : {}),
+      ...(inputData.recurrence ? { repeats: describeRecurrence(inputData.recurrence) } : {}),
+      ...(warnings.length ? { warning: warnings.join(" ") } : {}),
+    };
   },
 });
 

@@ -1,5 +1,6 @@
 import { Agent } from '@mastra/core/agent';
 import { hasToolCall, stepCountIs } from 'ai';
+import { todayLine } from './today-line.js';
 import { memory } from '../memory/index.js';
 import { neutralizeServerToolErrorsProcessor } from '../processors/neutralize-server-tool-errors.js';
 import { EXPONENTIAL_CONTEXT } from './exponential-context.js';
@@ -182,7 +183,7 @@ Your name, personality, and behavioral guidelines are provided in system message
 
 ${RUN_CONTRACT}
 
-Today's date is ${new Date().toISOString().slice(0, 10)} (UTC).
+${todayLine(new Date(), { canAskUser: false })}
 `;
 
 /** Map keys of the run's two endings — the tool names the model emits. */

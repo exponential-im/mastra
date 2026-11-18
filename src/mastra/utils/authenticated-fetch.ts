@@ -1,8 +1,35 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import SuperJSON from 'superjson';
 import { captureAuthFailure } from './sentry.js';
 import { verifyAndExtractUserId } from './gateway-shared.js';
 
 const TODO_APP_BASE_URL = process.env.TODO_APP_BASE_URL || 'http://localhost:3000';
+
+/**
+ * A per-call-chain override of the app the tRPC helpers talk to.
+ *
+ * Every tool reaches the app through `authenticatedTrpcCall` /
+ * `authenticatedTrpcQuery`, which read one process-wide base URL. The tool
+ * canary has to run the same tools against a different, non-production app
+ * from inside this process, without any other request in flight seeing the
+ * change. AsyncLocalStorage scopes the override to the canary's own async
+ * call chain; outside `withAppBaseUrl` nothing changes.
+ *
+ * Token refresh deliberately still uses the process-wide URL: it sends this
+ * service's gateway secret, which must never go to another app.
+ */
+const appBaseUrlOverride = new AsyncLocalStorage<string>();
+
+/** Run `fn` with tool calls to the app going to `baseUrl` instead of TODO_APP_BASE_URL. */
+export function withAppBaseUrl<T>(baseUrl: string, fn: () => Promise<T>): Promise<T> {
+  return appBaseUrlOverride.run(baseUrl.replace(/\/+$/, ''), fn);
+}
+
+/** The app base URL tool calls use right now. */
+export function currentAppBaseUrl(): string {
+  return appBaseUrlOverride.getStore() ?? TODO_APP_BASE_URL;
+}
+
 const WHATSAPP_GATEWAY_SECRET = process.env.WHATSAPP_GATEWAY_SECRET;
 const GATEWAY_SECRET = process.env.GATEWAY_SECRET ?? WHATSAPP_GATEWAY_SECRET;
 
@@ -307,7 +334,7 @@ export async function authenticatedTrpcCall<T = any>(
     tokenKind?: TokenKind;
   }
 ): Promise<AuthenticatedFetchResult<T>> {
-  const url = `${TODO_APP_BASE_URL}/api/trpc/${endpoint}`;
+  const url = `${currentAppBaseUrl()}/api/trpc/${endpoint}`;
 
   const result = await authenticatedFetch<{ result?: { data?: T }; json?: T }>({
     url,
@@ -341,7 +368,7 @@ export async function authenticatedTrpcQuery<T = any>(
     tokenKind?: TokenKind;
   }
 ): Promise<AuthenticatedFetchResult<T>> {
-  const url = `${TODO_APP_BASE_URL}/api/trpc/${endpoint}`;
+  const url = `${currentAppBaseUrl()}/api/trpc/${endpoint}`;
 
   const result = await authenticatedFetch<{ result?: { data?: T }; json?: T }>({
     url,

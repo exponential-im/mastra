@@ -17,6 +17,7 @@ import { CORS_ALLOWED_ORIGINS } from './utils/cors-origins.js';
 import { computeBrainVersions, agentIdFromPath, BRAIN_VERSION_HEADER } from './utils/brain-version.js';
 import { startScheduler, stopScheduler, triggerCheck, deliverWhatsAppBriefings, startChannelSummarizer, stopChannelSummarizer } from './proactive/index.js';
 import { startSpanRetention, stopSpanRetention } from './utils/span-retention.js';
+import { toolCanaryRoute } from './canary/tool-canary-route.js';
 import jwt from 'jsonwebtoken';
 import { createHmac, timingSafeEqual } from 'crypto';
 
@@ -167,6 +168,10 @@ export const mastra = new Mastra({
           }
         },
       },
+      // Tool canary (ticket 959): calls every read tool against a
+      // non-production app and returns the report. Off until
+      // TOOL_CANARY_SECRET and the three TOOL_CANARY_* target variables are set.
+      toolCanaryRoute,
     ],
     middleware: [
       async (c: any, next: any) => {

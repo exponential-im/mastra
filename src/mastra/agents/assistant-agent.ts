@@ -1,5 +1,6 @@
 import { anthropic } from '@ai-sdk/anthropic';
 import { agentTools } from './toolsets.js';
+import { todayLine } from './today-line.js';
 import { Agent } from '@mastra/core/agent';
 import { memory } from '../memory/index.js';
 import { neutralizeServerToolErrorsProcessor } from '../processors/neutralize-server-tool-errors.js';
@@ -105,6 +106,7 @@ import {
   listAssignableMembersTool,
   assignActionTool,
 } from '../tools/index.js';
+import { getMyTimeZoneTool, setMyTimeZoneTool } from '../tools/time-zone-tools.js';
 
 /**
  * Assistant Agent - Blank Canvas for User-Customized Personalities
@@ -184,6 +186,11 @@ ${ROUTING_POLICY}
 - **list-tickets**: READ a product's tickets — with dependency edges (dependsOn/requiredFor) and an isBlocked flag — optionally scoped to a cycle/status/type. THIS is how you answer "what tickets are in cycle 10?", "could any have dependencies?", or "what's blocked?". NEVER ask the user to paste tickets — call this. Pass the cycle as the user says it ("Cycle 10" / "10"); the server resolves the name and returns availableCycles if it can't. If totalCount exceeds the returned rows, say the list is truncated.
 - **add-ticket-dependencies**: Link tickets by number — {ticketNumber, dependsOnNumber} means ticketNumber is blocked by dependsOnNumber. Self-links and cycles are rejected server-side. ALWAYS propose the edges and get the user's confirmation before calling; it writes data. Relay the added/failed manifest honestly.
 
+### Reading meetings
+- **get-meeting-transcriptions**: Read meetings and calls. When you know which meeting is meant (the page context names a Transcription ID, or you found it in a list), pass its \`transcriptionId\` and the whole transcript comes back. Without it the latest few share a budget and long ones are cut: a cut transcript has \`transcriptTruncated: true\` and a \`transcriptNote\` saying how to read the rest.
+- **query-meeting-context**: Semantic search across meetings; pass \`transcriptionId\` to search inside one. Results are excerpts, so no match is not proof a topic never came up.
+- For "what did X say" / "did they mention Y", answer from what was said in the transcript, not from the summary. Never say something was not said from a truncated transcript or an empty search: read the whole meeting first, or say you only read part of it.
+
 ### Product feature ideation (from meetings)
 - **ideate-features**: Turn a MEETING into DRAFT product features for the user to review. Use it when they ask to ideate/brainstorm/extract product features or ideas from a meeting or call. Pass the meeting's \`transcriptionId\` — resolve it with get-meeting-transcriptions if they named the meeting instead. Pass \`focus\` ONLY when they actually steered it ("focus on the ingestion parts"); otherwise omit it.
 - Everything it produces is a DRAFT awaiting human acceptance in a review card — it writes nothing to the product backlog — so call it directly, no confirmation needed. Report the returned draftCount honestly, say the drafts are waiting for their review, and never claim features were created.
@@ -200,7 +207,7 @@ ${ROUTING_POLICY}
 - **get-upcoming-calendar-events**: See what's coming up (default 7 days).
 - **get-calendar-events-in-range**: Get events in a specific date range.
 - **find-available-time-slots**: Identify free time for scheduling.
-- **create-calendar-event**: Create new events (ALWAYS require user confirmation first).
+- **create-calendar-event**: Create new events (ALWAYS require user confirmation first). Give times as the user's local wall-clock time with no offset and no 'Z'. Something on several days or every week is ONE event with \`recurrence\`, never one per day. In the confirmation, state each date WITH its weekday, the time and the time zone, and if a day they named has already passed this week, say so and ask. Afterwards report exactly what the tool's \`startsAt\` and \`repeats\` say. You cannot edit or delete an event: if one is wrong, say so plainly and tell the user what to change in their calendar.
 
 **CRITICAL: Event Creation Policy**
 - NEVER create calendar events without explicit user confirmation.
@@ -437,6 +444,9 @@ export const assistantTools = {
     findAvailableTimeSlotsTool,
     createCalendarEventTool,
     checkCalendarConnectionTool,
+    // The person's saved time zone (ticket 972)
+    getMyTimeZoneTool,
+    setMyTimeZoneTool,
     // CRM tools
     searchCrmContactsTool,
     getCrmContactTool,
@@ -508,7 +518,7 @@ export const assistantTools = {
 // Anthropic prompt cache prefix changes at most once per UTC day, not per
 // request. Same pattern as zoe-agent.ts.
 const assistantInstructions = () =>
-  `${INSTRUCTIONS}\n\nToday's date is ${new Date().toISOString().slice(0, 10)} (UTC).`;
+  `${INSTRUCTIONS}\n\n${todayLine()}`;
 
 export const assistantAgent = new Agent({
   id: 'assistantAgent',
