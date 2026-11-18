@@ -42,11 +42,17 @@ describe('resolveUserTimeZone: chat, then saved profile, then none', () => {
     expect(trpcQuery).toHaveBeenCalledWith('user.getTimezone', { authToken: 't', sessionId: 's1', userId: 'u1' });
   });
 
-  it('returns no zone, not UTC, when nothing is saved or the read fails', async () => {
+  it('returns no zone, not UTC, when nothing is saved', async () => {
     trpcQuery.mockResolvedValueOnce({ data: { timezone: null } });
     expect(await resolveUserTimeZone(turn() as never)).toEqual({ zone: null, source: null });
+  });
+
+  it('marks a failed read as unreadable, not as nothing saved', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     trpcQuery.mockRejectedValueOnce(new Error('down'));
-    expect(await resolveUserTimeZone(turn() as never)).toEqual({ zone: null, source: null });
+    expect(await resolveUserTimeZone(turn() as never)).toEqual({ zone: null, source: null, unreadable: true });
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
   });
 });
 
@@ -98,6 +104,13 @@ describe('get-my-time-zone', () => {
     expect(out.instruction).toContain('Settings → Profile');
   });
 
+  it('throws when the saved zone cannot be read, so the failure is visible', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    trpcQuery.mockRejectedValue(new Error('500'));
+    await expect(run(getMyTimeZoneTool, {}, turn())).rejects.toThrow(/Could not read the user's saved time zone/);
+    warn.mockRestore();
+  });
+
   it('with no zone, tells the agent to ask', async () => {
     trpcQuery.mockResolvedValue({ data: { timezone: null } });
     const out = (await run(getMyTimeZoneTool, {}, turn())) as Record<string, string | null>;
@@ -126,5 +139,15 @@ describe('set-my-time-zone', () => {
     expect(trpcCall).toHaveBeenCalledWith('user.updateTimezone', { timezone: 'Europe/Lisbon' }, { authToken: 't', sessionId: undefined, userId: 'u1' });
     expect(out.timeZone).toBe('Europe/Lisbon');
     expect(ctx.get('timezone')).toBe('Europe/Lisbon');
+  });
+});
+
+describe('todayLine', () => {
+  it('tells chat agents to read the zone, and leaves it out for background runs', async () => {
+    const { todayLine } = await import('../agents/today-line.js');
+    const now = new Date('2026-11-18T10:00:00Z');
+    expect(todayLine(now)).toContain('get-my-time-zone');
+    expect(todayLine(now, { canAskUser: false })).not.toContain('get-my-time-zone');
+    expect(todayLine(now, { canAskUser: false })).not.toContain('ask the user');
   });
 });

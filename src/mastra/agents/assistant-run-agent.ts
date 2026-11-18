@@ -183,7 +183,7 @@ Your name, personality, and behavioral guidelines are provided in system message
 
 ${RUN_CONTRACT}
 
-${todayLine()}
+${todayLine(new Date(), { canAskUser: false })}
 `;
 
 /** Map keys of the run's two endings — the tool names the model emits. */

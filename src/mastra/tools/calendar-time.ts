@@ -103,7 +103,7 @@ export function resolveEventInstant(value: string, timeZone: string | undefined,
   }
   if (!timeZone) {
     throw new Error(
-      `${field} "${value}" has no time zone and the user's zone is not known (none is saved in their profile). Ask the user for their time zone, once, and pass it as timeZone (an IANA name such as "Europe/Berlin"). Offer to save it with set-my-time-zone so you need not ask again.`,
+      `${field} "${value}" has no time zone and the user's zone is not known. Ask the user for their time zone, once, and pass it as timeZone (an IANA name such as "Europe/Berlin"). Offer to save it with set-my-time-zone so you need not ask again; without that tool, point them to Settings → Profile.`,
     );
   }
   const [, y, mo, d, h, mi, sec] = match;

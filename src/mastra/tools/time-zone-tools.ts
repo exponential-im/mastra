@@ -23,11 +23,15 @@ export type TimeZoneSource = "chat" | "profile";
 
 export type UserTimeZone =
   | { zone: string; source: TimeZoneSource }
-  | { zone: null; source: null };
+  /** `unreadable`: the profile could not be read, so whether one is saved is unknown. */
+  | { zone: null; source: null; unreadable?: true };
 
 const WHERE_TO_CHANGE = "Settings → Profile";
 
 const NO_ZONE: UserTimeZone = { zone: null, source: null };
+
+/** Said wherever the model is told to save a zone: the tool is not on every map. */
+const SAVE_FALLBACK = `If you have no set-my-time-zone tool, tell them to set it in ${WHERE_TO_CHANGE}; never claim you saved it.`;
 
 function authOf(requestContext: AppRequestContext | undefined) {
   const authToken = requestContext?.get("authToken");
@@ -44,7 +48,8 @@ function authOf(requestContext: AppRequestContext | undefined) {
  * profile, else none. A zone read from the profile is kept on the request
  * context, so later tools in the same turn do not read it again.
  *
- * A failed read is treated as no zone (the agent then asks), never as UTC.
+ * A failed read is no zone (the agent then asks), never UTC. It is logged and
+ * marked `unreadable`, so it is not mistaken for "nothing saved".
  */
 export async function resolveUserTimeZone(requestContext: AppRequestContext | undefined): Promise<UserTimeZone> {
   const fromChat = requestContext?.get("timezone");
@@ -62,8 +67,11 @@ export async function resolveUserTimeZone(requestContext: AppRequestContext | un
     requestContext?.set("timezone", saved);
     requestContext?.set("timezoneSource", "profile");
     return { zone: saved, source: "profile" };
-  } catch {
-    return NO_ZONE;
+  } catch (error) {
+    console.warn(
+      `⚠️ [resolveUserTimeZone] could not read the saved time zone: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return { zone: null, source: null, unreadable: true };
   }
 }
 
@@ -81,11 +89,18 @@ export const getMyTimeZoneTool = createTool({
   execute: async (_inputData, ctx) => {
     const requestContext = asAppContext(ctx.requestContext);
     const known = await resolveUserTimeZone(requestContext);
+    if (known.zone === null && known.unreadable) {
+      // Thrown, not returned: the canary and the model must see a failed
+      // read, not a person with nothing saved.
+      throw new Error(
+        "Could not read the user's saved time zone. Ask them which time zone they are in for now; do not tell them nothing is saved.",
+      );
+    }
     if (!known.zone) {
       return {
         timeZone: null,
         source: null,
-        instruction: `The user's time zone is not known: none is saved in their profile. Ask which time zone they are in (a city is enough). Do not assume UTC. When they answer, offer to save it with set-my-time-zone (only after they say yes); they can also set it in ${WHERE_TO_CHANGE}.`,
+        instruction: `The user's time zone is not known: none is saved in their profile. Ask which time zone they are in (a city is enough). Do not assume UTC. When they answer, offer to save it with set-my-time-zone (only after they say yes). ${SAVE_FALLBACK}`,
       };
     }
     const origin =
@@ -96,7 +111,7 @@ export const getMyTimeZoneTool = createTool({
       timeZone: known.zone,
       source: known.source,
       localNow: describeInstant(new Date(), known.zone),
-      instruction: `Use ${known.zone}, ${origin}. Times the user gives are in this zone unless they name another. They can change it in ${WHERE_TO_CHANGE}, or tell you and you save it with set-my-time-zone after they confirm.`,
+      instruction: `Use ${known.zone}, ${origin}. Times the user gives are in this zone unless they name another. They can change it in ${WHERE_TO_CHANGE}, or tell you and you save it with set-my-time-zone after they confirm. ${SAVE_FALLBACK}`,
     };
   },
 });
