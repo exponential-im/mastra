@@ -27,7 +27,10 @@ const { RUN_CONTRACT, assistantRunInstructions } = await import('../agents/assis
  * Eval cases for the chat conversation policy (Exponential ticket
  * clear.flame): a date that conflicts with the calendar, two stated dates
  * that disagree, a repeated create for the same name, a reply that ends in a
- * menu of offers, and logistics written into a title without a lookup.
+ * menu of offers, logistics written into a title without a lookup, a fully
+ * specified calendar request that must still be confirmed first, and a
+ * "done" reply that restated every detail the user had just approved (both
+ * from the German-slots chat).
  *
  * Feed them to the live runner with
  *   npm run eval-replay -- src/mastra/evals/fixtures/conversation-cases.json
@@ -53,7 +56,9 @@ describe('conversation eval cases', () => {
       [
         'conversation-date-conflict-calendar',
         'conversation-date-conflict-stated',
+        'conversation-confirm-once-report-in-a-line',
         'conversation-hedged-logistics',
+        'conversation-calendar-confirm-before-create',
         'conversation-one-next-step',
         'conversation-repeated-create-show-me',
       ].sort(),
@@ -101,6 +106,22 @@ describe('conversation eval cases', () => {
     expect(c.expectation).toMatch(/must NOT write opening hours[^.]* into the action title as constraints/);
   });
 
+  it('a fully specified calendar request is still confirmed first, with no web search', () => {
+    const c = byId('conversation-calendar-confirm-before-create');
+    expect(c.transcript[0]!.userMessage).toMatch(/mondays, wednesdays and Fridays at 830 am/);
+    expect(c.expectation).toMatch(/must NOT call create-calendar-event in this turn/);
+    expect(c.expectation).toMatch(/MUST NOT call web search/);
+    expect(c.expectation).toMatch(/ONE recurring event/);
+    expect(c.expectation).toMatch(/first date with its weekday \(Monday 23 November\) and the time zone/);
+  });
+
+  it('after a yes, the report is a line from the tool result, not the approved details again', () => {
+    const c = byId('conversation-confirm-once-report-in-a-line');
+    expect(c.transcript[1]!.userMessage).toBe('yes');
+    expect(c.expectation).toMatch(/report in one or two lines what the tool returned/);
+    expect(c.expectation).toMatch(/must NOT restate the approved details/);
+  });
+
   it('frozen prefix ends on the user turn the candidate must answer', () => {
     for (const c of cases) {
       const prefix = buildFrozenPrefix(c);
@@ -111,7 +132,7 @@ describe('conversation eval cases', () => {
 
   it('the built Assistant prompt carries the block; the run agent prompt does not', () => {
     expect(INSTRUCTIONS).toContain(CONVERSATION_POLICY);
-    const heading = '### Dates, repeats, next steps and unchecked facts';
+    const heading = '### How you talk while you work';
     expect(INSTRUCTIONS).toContain(heading);
     expect(RUN_CONTRACT).not.toContain(heading);
     expect(assistantRunInstructions()).not.toContain(heading);

@@ -289,7 +289,7 @@ The bot can only see channels it has been invited to.
 - **web search**: Search the web for current information in real-time.
 - **web fetch**: Read a specific URL (articles, docs, PDFs).
 
-Use web search for current events, unfamiliar topics, or research. Use Exponential tools first for the user's own data.
+Use web search for current events, unfamiliar topics, or research. Never use it for the user's own projects, actions, goals, calendar, contacts or email: use the Exponential tools for those.
 
 ## How You Work
 

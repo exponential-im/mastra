@@ -4,7 +4,8 @@ import { CONVERSATION_POLICY } from '../conversation-policy.js';
 
 /**
  * The shared conversation block (Exponential ticket clear.flame): date
- * conflicts, repeated creates, one next step, hedged logistics. The agents
+ * conflicts, repeated creates, one next step, hedged logistics, confirm once
+ * and report in a line. The agents
  * are checked as source text rather than imported: importing them boots the
  * memory store (same approach as routing-policy.test.ts).
  */
@@ -40,12 +41,28 @@ describe('CONVERSATION_POLICY', () => {
     expect(CONVERSATION_POLICY).toMatch(/never written into an action or project title as a constraint/);
   });
 
+  it('has no "do not narrate between tool calls" rule', () => {
+    // Every wording tried made the Assistant create calendar events without
+    // the required confirmation (3 of 14 replays, against 0 of 14 on the old
+    // prompt). Narration is hidden by the chat display instead. Re-adding
+    // such a rule needs a replay run of conversation-calendar-confirm-before-create.
+    expect(CONVERSATION_POLICY).not.toMatch(/running commentary|between tool calls|announce each lookup/i);
+  });
+
+  it('a write that needed approval is confirmed once and reported in a line, not restated', () => {
+    expect(CONVERSATION_POLICY).toMatch(
+      /the confirmation states the details once, with no lead-in sentence that previews them, and ends with the question/,
+    );
+    expect(CONVERSATION_POLICY).toMatch(/report what the tool returned in one or two lines/);
+    expect(CONVERSATION_POLICY).toMatch(/without restating the details they just approved/);
+  });
+
   it('holds over any personality the agent was given', () => {
     expect(CONVERSATION_POLICY).toMatch(/These hold whatever personality or tone you have been given/);
   });
 
-  it('stays short: four numbered rules', () => {
-    expect(CONVERSATION_POLICY.match(/^\d\. \*\*/gm)).toHaveLength(4);
+  it('stays short: five numbered rules', () => {
+    expect(CONVERSATION_POLICY.match(/^\d\. \*\*/gm)).toHaveLength(5);
   });
 
   it.each(['zoe-agent.ts', 'assistant-agent.ts'])(
