@@ -9,6 +9,15 @@ import {
 } from "../utils/authenticated-fetch.js";
 import { prepareUntrustedContent, auditWriteAction } from "../utils/content-safety.js";
 import { fitTranscript, transcriptLimit } from "./meeting-transcript-budget.js";
+import {
+  WEEKDAYS,
+  alignToFirstOccurrence,
+  describeInstant,
+  describeRecurrence,
+  isValidTimeZone,
+  resolveEventInstant,
+  weeklyRule,
+} from "./calendar-time.js";
 import { asAppContext } from "../types/request-context.js";
 import { isForbidden } from "./routing-tools.js";
 import { looseBoolean, looseNumber, looseEnum, looseStringArray, looseEnumArray, looseAttendees, normalizeDateTime, resolveDateRange } from "./zod-loose.js";
@@ -1776,12 +1785,21 @@ export const findAvailableTimeSlotsTool = createTool({
 
 export const createCalendarEventTool = createTool({
   id: "create-calendar-event",
-  description: "Create a new calendar event. CRITICAL: ALWAYS require explicit user confirmation before calling this tool. Never create events autonomously.",
+  description: "Create a new calendar event. CRITICAL: ALWAYS require explicit user confirmation before calling this tool. Never create events autonomously. TIMES: give the user's local wall-clock time with NO offset and NO 'Z' (\"2026-11-18T08:30:00\"); it is read in the user's time zone. REPEATING: for something that happens on several days or every week, create ONE event with `recurrence`, never one event per day. AFTER: tell the user exactly what `startsAt` and `repeats` say, including the weekday, and pass on any `warning`. You cannot edit or delete an event once created, so get the day, time and zone right in the confirmation.",
   inputSchema: z.object({
     summary: z.string().describe("Event title/summary"),
     description: z.string().optional().describe("Event description"),
-    startDateTime: z.string().describe("Start date/time in ISO 8601 format"),
-    endDateTime: z.string().describe("End date/time in ISO 8601 format"),
+    startDateTime: z.string().describe("Start as local wall-clock time with no offset, e.g. \"2026-11-18T08:30:00\". For a repeating event, any date on or shortly before the first occurrence."),
+    endDateTime: z.string().describe("End as local wall-clock time with no offset, e.g. \"2026-11-18T08:50:00\""),
+    timeZone: z.string().optional().describe("IANA time zone, e.g. \"Europe/Berlin\". Omit to use the user's own zone; set it only when they name a different one."),
+    recurrence: z
+      .object({
+        daysOfWeek: looseEnumArray(WEEKDAYS).describe("Days it repeats on: MO, TU, WE, TH, FR, SA, SU"),
+        until: z.string().optional().describe("Last date it may occur, \"YYYY-MM-DD\". Omit for no end."),
+        count: looseNumber(z.number()).optional().describe("Or the number of occurrences. Ignored when `until` is set."),
+      })
+      .optional()
+      .describe("Make it a weekly repeating event. \"Mon, Wed and Fri at 8:30\" is ONE event with daysOfWeek [MO, WE, FR]."),
     location: z.string().optional().describe("Event location"),
     // looseAttendees tolerates the shapes models actually emit (bare email
     // string, array of strings, "Name <email>", single object, null).
@@ -1798,6 +1816,11 @@ export const createCalendarEventTool = createTool({
     }),
     provider: z.string(),
     error: z.string().optional(),
+    startsAt: z.string().optional(),
+    endsAt: z.string().optional(),
+    timeZone: z.string().optional(),
+    repeats: z.string().optional(),
+    warning: z.string().optional(),
   }),
   execute: async (inputData, ctx) => {
     const requestContext = asAppContext(ctx.requestContext);
@@ -1813,10 +1836,45 @@ export const createCalendarEventTool = createTool({
       throw new Error("No authentication token available");
     }
 
+    // The zone the times are read in: the one the model named, else the
+    // person's own (sent by the chat). A wall-clock time with neither is
+    // refused by resolveEventInstant; it is never read as UTC.
+    const requestedZone = inputData.timeZone?.trim();
+    if (requestedZone && !isValidTimeZone(requestedZone)) {
+      throw new Error(`"${requestedZone}" is not a time zone I know. Use an IANA name such as "Europe/Berlin".`);
+    }
+    const contextZone = requestContext?.get("timezone");
+    const timeZone = requestedZone ?? (isValidTimeZone(contextZone) ? contextZone : undefined);
+
+    let start = resolveEventInstant(inputData.startDateTime, timeZone, "startDateTime");
+    let end = resolveEventInstant(inputData.endDateTime, timeZone, "endDateTime");
+    if (end.getTime() <= start.getTime()) {
+      throw new Error("endDateTime must be after startDateTime.");
+    }
+
+    const warnings: string[] = [];
+    let rule: string | undefined;
+    if (inputData.recurrence) {
+      if (!timeZone) {
+        throw new Error(
+          'A repeating event needs a time zone and the user\'s zone is not known. Ask the user and pass it as timeZone (e.g. "Europe/Berlin").',
+        );
+      }
+      rule = weeklyRule(inputData.recurrence);
+      const aligned = alignToFirstOccurrence(start, end, timeZone, inputData.recurrence.daysOfWeek);
+      start = aligned.start;
+      end = aligned.end;
+    }
+    if (start.getTime() < Date.now()) {
+      warnings.push(
+        `The ${rule ? "first occurrence" : "event"} starts in the past (${describeInstant(start, timeZone)}). Tell the user and ask whether they meant a later date.`,
+      );
+    }
+
     auditWriteAction({
       tool: 'create-calendar-event',
       userId: userId as string | undefined,
-      params: { summary: inputData.summary, start: inputData.startDateTime, attendees: inputData.attendees?.length ?? 0 },
+      params: { summary: inputData.summary, start: start.toISOString(), timeZone: timeZone ?? 'none', recurrence: rule ?? 'none', attendees: inputData.attendees?.length ?? 0 },
       timestamp: new Date().toISOString(),
       userConfirmed: inputData.userConfirmed,
     });
@@ -1827,22 +1885,36 @@ export const createCalendarEventTool = createTool({
         summary: inputData.summary,
         description: inputData.description,
         // The backend validates with z.string().datetime(), which rejects
-        // offset timestamps ("+02:00") and date-only strings; normalize to
-        // canonical UTC ISO so a valid instant is never bounced.
+        // offset timestamps ("+02:00"), so the instant goes as canonical UTC
+        // ISO. The zone travels beside it: the calendar shows the event in
+        // that zone and expands a repeating one on that zone's clock.
         start: {
-          dateTime: normalizeDateTime(inputData.startDateTime, "start"),
+          dateTime: start.toISOString(),
+          ...(timeZone ? { timeZone } : {}),
         },
         end: {
-          dateTime: normalizeDateTime(inputData.endDateTime, "end"),
+          dateTime: end.toISOString(),
+          ...(timeZone ? { timeZone } : {}),
         },
         location: inputData.location,
         attendees: inputData.attendees,
         provider: inputData.provider,
+        ...(rule ? { recurrence: [rule] } : {}),
       },
       { authToken, sessionId, userId }
     );
 
-    return { event: data.event, provider: data.provider };
+    // What was really created, in the person's zone, for the model to repeat
+    // back. Without it the model reports what it meant to create.
+    return {
+      event: data.event,
+      provider: data.provider,
+      startsAt: describeInstant(start, timeZone),
+      endsAt: describeInstant(end, timeZone),
+      ...(timeZone ? { timeZone } : {}),
+      ...(inputData.recurrence ? { repeats: describeRecurrence(inputData.recurrence) } : {}),
+      ...(warnings.length ? { warning: warnings.join(" ") } : {}),
+    };
   },
 });
 

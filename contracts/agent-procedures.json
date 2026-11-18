@@ -1729,6 +1729,14 @@
               "microsoft"
             ],
             "default": "google"
+          },
+          "recurrence": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^RRULE:[A-Z0-9=;,:+-]+$"
+            },
+            "maxItems": 2
           }
         },
         "required": [
