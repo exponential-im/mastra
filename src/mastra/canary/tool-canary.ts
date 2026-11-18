@@ -242,12 +242,31 @@ function schemaFailure(result: unknown): { kind: 'output-schema' | 'input-schema
   return { kind: 'output-schema', message };
 }
 
-async function preflight(target: ToolCanaryTarget): Promise<ToolCanaryReport['preflight']> {
+/**
+ * Some tools catch the app's rejection and hand the model `{ error: "..." }`
+ * instead of throwing (the Notion tools do). With no output schema nothing
+ * else marks that as a failure, so a broken procedure would read as `ok`.
+ * Only an object that is nothing but an error message counts: a normal answer
+ * can carry an `error` field next to its data (`{ isConnected: false, error }`).
+ */
+function returnedError(result: unknown): string | undefined {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return undefined;
+  const keys = Object.keys(result);
+  const { error } = result as { error?: unknown };
+  return keys.length === 1 && typeof error === 'string' && error.trim().length > 0 ? error : undefined;
+}
+
+async function preflight(target: ToolCanaryTarget, timeoutMs: number): Promise<ToolCanaryReport['preflight']> {
   try {
-    const { data } = await authenticatedTrpcCall<{ workspaces?: Array<{ id?: string }> }>(
-      'mastra.getUserWorkspaces',
-      {},
-      { authToken: target.authToken },
+    // Bounded like every probe: a target that accepts the connection and then
+    // stalls must not hold the run (and the route's one-run-at-a-time lock) open.
+    const { data } = await withTimeout(
+      authenticatedTrpcCall<{ workspaces?: Array<{ id?: string }> }>(
+        'mastra.getUserWorkspaces',
+        {},
+        { authToken: target.authToken },
+      ),
+      timeoutMs,
     );
     const workspaces = Array.isArray(data?.workspaces) ? data.workspaces : undefined;
     if (workspaces && !workspaces.some((workspace) => workspace?.id === target.workspaceId)) {
@@ -260,6 +279,7 @@ async function preflight(target: ToolCanaryTarget): Promise<ToolCanaryReport['pr
     return { ok: true };
   } catch (error) {
     const text = scrub(errorText(error), target.authToken);
+    if (error instanceof ProbeTimeout) return { ok: false, kind: 'unreachable', error: `the target did not answer: ${text}` };
     if (/authentication failed|request failed:\s*(401|403)\b/i.test(text)) {
       return { ok: false, kind: 'auth', error: text };
     }
@@ -363,6 +383,12 @@ export async function runToolCanary(target: ToolCanaryTarget, options: ToolCanar
         finish({ status: 'failed', errorKind: failure.kind, error: scrub(failure.message, target.authToken) });
         return;
       }
+      const toolError = returnedError(output);
+      if (toolError) {
+        // Reported like a throw: the text is what the app answered.
+        finish({ status: 'failed', errorKind: 'threw', error: scrub(toolError, target.authToken) });
+        return;
+      }
       Object.assign(fixture, plan.provides?.(output) ?? {});
       finish({ status: 'ok' });
     } catch (error) {
@@ -386,7 +412,7 @@ export async function runToolCanary(target: ToolCanaryTarget, options: ToolCanar
   };
 
   const preflightResult = await withAppBaseUrl(target.baseUrl, async () => {
-    const check = await preflight(target);
+    const check = await preflight(target, toolTimeoutMs);
 
     const callable: Candidate[] = [];
     for (const candidate of candidates) {

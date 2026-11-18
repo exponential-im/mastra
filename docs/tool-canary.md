@@ -15,11 +15,12 @@ The contract test ([tool-contracts.md](tool-contracts.md)) proves the shape of a
 
 ## What a run does
 
-1. It checks the target answers and accepts the credential. If not, it stops and reports that one fault. No tool is blamed.
+1. It checks the target answers and accepts the credential, within the same 20-second limit as a probe. If not, it stops and reports that one fault. No tool is blamed.
 2. It skips every tool the inventory marks as a write, and every tool the inventory says does not call the app. It never calls either.
 3. It calls the read tools that need no id. Their answers supply ids (a project, a product, a contact) from the fixture workspace.
 4. It calls the read tools that need one of those ids. If the fixture has none, the tool is skipped and the report says which id was missing.
 5. A tool fails when it throws, when it does not answer within 20 seconds, or when Mastra reports that its output failed the tool's output schema. Mastra returns that last case as a normal result, `{ error: true }`, so the canary checks for it.
+6. A tool also fails when it returns nothing but an error message, `{ error: "..." }`. The Notion tools catch the app's rejection and return that. An answer that carries an `error` field next to its data is not a failure.
 
 A run against a local app takes 2 to 20 seconds for 139 tools. The whole run stops starting probes after 4 minutes.
 

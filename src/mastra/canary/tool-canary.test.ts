@@ -158,6 +158,25 @@ describe('runToolCanary', () => {
     expect(outside).not.toBe('https://staging.example.test');
   });
 
+  it('fails a tool that swallows the app\'s rejection and returns only an error message', async () => {
+    const report = await run([
+      // What the Notion tools return when the app rejects the request.
+      entry('notionSearch', async () => ({ error: 'Request failed: 400 Bad Request - {"path":"mastra.notionSearch"}' })),
+      // Normal answers that merely carry an error field, or say "not connected".
+      entry('emailStatus', async () => ({ isConnected: false, error: 'No mailbox connected' })),
+      entry('notionOff', async () => ({ connected: false })),
+      entry('emptyError', async () => ({ error: '' })),
+    ]);
+    expect(report.tools.map((tool) => [tool.name, tool.status])).toEqual([
+      ['notionSearch', 'failed'],
+      ['emailStatus', 'ok'],
+      ['notionOff', 'ok'],
+      ['emptyError', 'ok'],
+    ]);
+    expect(report.tools[0]).toMatchObject({ errorKind: 'threw' });
+    expect(report.tools[0]?.error).toContain('mastra.notionSearch');
+  });
+
   it('removes its own token from failure text', async () => {
     const report = await run([
       entry('leaky', async () => {
@@ -212,6 +231,14 @@ describe('runToolCanary', () => {
       expect(report.tools[0]?.reason).toContain(kind);
       // A write tool keeps its own reason.
       expect(report.tools[1]?.reason).toMatch(/write tool/);
+      expect(probed).not.toHaveBeenCalled();
+    });
+
+    it('gives up on a target that accepts the call and never answers', async () => {
+      authenticatedTrpcCall.mockReturnValue(new Promise(() => undefined));
+      const report = await run(fakes, { toolTimeoutMs: 20 });
+      expect(report.preflight).toMatchObject({ ok: false, kind: 'unreachable' });
+      expect(report.counts.failed).toBe(0);
       expect(probed).not.toHaveBeenCalled();
     });
 
