@@ -83,6 +83,17 @@ describe('withToolStepIntent', () => {
     expect(wrapped.outputSchema).toBe(tool.outputSchema);
   });
 
+  it('keeps a passthrough schema passthrough', () => {
+    const tool = createTool({
+      id: 'loose',
+      description: 'Passthrough',
+      inputSchema: z.object({ a: z.string() }).passthrough(),
+      execute: async (input: unknown) => input,
+    });
+    const schema = withToolStepIntent(tool).inputSchema as unknown as z.AnyZodObject;
+    expect(schema._def.unknownKeys).toBe('passthrough');
+  });
+
   it('returns the same wrapped instance for the same tool', () => {
     const { tool } = makeTool();
     expect(withToolStepIntent(tool)).toBe(withToolStepIntent(tool));
@@ -127,20 +138,28 @@ describe('withStepIntent', () => {
 // Every tool module, scanned the way tool-contract.test.ts does it. Importing
 // the agents would boot the Postgres memory store.
 describe('tool schemas', () => {
-  it('no tool declares its own intent field (it is reserved for the step label)', async () => {
+  it('every tool has a z.object schema, and none declares its own intent field', async () => {
     const toolsDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../tools');
     const clashes: string[] = [];
+    const notObjects: string[] = [];
     let count = 0;
     for (const name of readdirSync(toolsDir).sort()) {
       if (!name.endsWith('.ts') || name.endsWith('.test.ts') || name.endsWith('.d.ts')) continue;
       const mod = (await import(pathToFileURL(path.join(toolsDir, name)).href)) as Record<string, unknown>;
       for (const value of Object.values(mod)) {
-        if (!(value instanceof Tool) || !(value.inputSchema instanceof z.ZodObject)) continue;
+        if (!(value instanceof Tool)) continue;
+        // withStepIntent can only extend a z.object schema; any other shape
+        // would silently go without the field.
+        if (!(value.inputSchema instanceof z.ZodObject)) {
+          notObjects.push(`${name}: ${value.id}`);
+          continue;
+        }
         count++;
         if ('intent' in shapeOf(value)) clashes.push(`${name}: ${value.id}`);
       }
     }
     expect(count).toBeGreaterThan(100);
     expect(clashes).toEqual([]);
+    expect(notObjects).toEqual([]);
   });
 });

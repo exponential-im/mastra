@@ -62,8 +62,10 @@ export function withToolStepIntent<T>(tool: T): T {
     id: original.id,
     description: original.description,
     inputSchema: schema.extend({ [STEP_INTENT_FIELD]: stepIntentSchema }),
-    execute: (input: unknown, context: unknown) =>
-      (original.execute as (i: unknown, c: unknown) => Promise<unknown>)(withoutIntent(input), context),
+    // `original.execute` is bound to the original tool by Mastra's constructor,
+    // so calling it bare is safe. Any further arguments are forwarded as-is.
+    execute: (input: unknown, ...rest: unknown[]) =>
+      (original.execute as (...args: unknown[]) => Promise<unknown>)(withoutIntent(input), ...rest),
   }) as AnyTool;
 
   // Keep every other property (output schema, approval, provider options,
