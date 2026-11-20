@@ -5,6 +5,7 @@ import { bulkyPayloadTruncator } from './utils/tracing.js';
 import { weatherAgent, ashAgent, pierreAgent, projectManagerAgent, zoeAgent, zoeAgentHaiku, expoAgent, assistantAgent, assistantAgentHaiku, assistantRunAgent, platformAgent, one2bAgent, enrichmentAgent, actionItemsAgent, meetingContextAgent, documentTrackerAgent, localWikiAgent } from './agents';
 import { memory, storage } from './memory/index.js';
 import { createLogger } from './utils/logger.js';
+import { describeModelRouting } from './utils/model-routing.js';
 import { createTelegramBot, cleanupTelegramBot } from './bots/ostrom-telegram.js';
 import { createTelegramGateway, cleanupTelegramGateway } from './bots/telegram-gateway.js';
 import { createMatrixGateway, cleanupMatrixGateway } from './bots/matrix-gateway.js';
@@ -54,6 +55,10 @@ if (!oneTwoBAgentsEnabled) {
     '🚧 [MAIN] One2b agents disabled — set MASTRA_ONE2B_AGENTS_ENABLED=true to activate',
   );
 }
+
+// Which provider observational memory, the channel summarizer and the Haiku
+// fallback are on (OpenRouter when OPENROUTER_API_KEY is set; ADR-0065 §3).
+logger.info('🔀 [MAIN] Model routing', describeModelRouting());
 
 // Fail fast if any agent's system prompt is missing or malformed.
 // Protects against the class of bug where instructions are assigned a

@@ -1,9 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
+import { MockLanguageModelV3 } from 'ai/test';
 
 import {
   computeWindow,
   shouldPost,
   runChannelSummarizer,
+  summarizeMessages,
   type ChannelSummarizerDeps,
   type WindowMessage,
 } from './channel-summarizer.js';
@@ -152,5 +154,61 @@ describe('runChannelSummarizer', () => {
 
     expect(stats).toMatchObject({ groups: 0, posted: 0 });
     expect(post).not.toHaveBeenCalled();
+  });
+});
+
+describe('summarizeMessages model fallback (ADR-0065 §3)', () => {
+  const messages: WindowMessage[] = [
+    {
+      senderName: 'Ana',
+      text: 'We ship the Berlin pilot on Friday.',
+      timestamp: new Date('2026-11-14T09:00:00.000Z'),
+    },
+  ];
+
+  function answering(text: string) {
+    return new MockLanguageModelV3({
+      doGenerate: async () =>
+        ({
+          content: [{ type: 'text', text }],
+          finishReason: { unified: 'stop', raw: 'stop' },
+          usage: {
+            inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 },
+            outputTokens: { total: 1, text: 1, reasoning: 0 },
+          },
+          warnings: [],
+        }) as never,
+    });
+  }
+
+  function failing() {
+    return new MockLanguageModelV3({
+      doGenerate: async () => {
+        throw new Error('402 from OpenRouter: insufficient credits');
+      },
+    });
+  }
+
+  it('uses the first model when it answers', async () => {
+    const first = answering('  Ana: Berlin pilot ships Friday.  ');
+    const second = answering('should not be called');
+
+    expect(await summarizeMessages(messages, [first, second])).toBe('Ana: Berlin pilot ships Friday.');
+    expect(first.doGenerateCalls).toHaveLength(1);
+    expect(second.doGenerateCalls).toHaveLength(0);
+  });
+
+  it('falls through to the next model when the first throws', async () => {
+    const first = failing();
+    const second = answering('Berlin pilot ships Friday.');
+
+    expect(await summarizeMessages(messages, [first, second])).toBe('Berlin pilot ships Friday.');
+    expect(second.doGenerateCalls).toHaveLength(1);
+  });
+
+  it('throws when every model fails, so the watermark stays put', async () => {
+    await expect(summarizeMessages(messages, [failing(), failing()])).rejects.toThrow(
+      'insufficient credits',
+    );
   });
 });

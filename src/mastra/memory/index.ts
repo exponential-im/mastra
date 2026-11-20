@@ -1,5 +1,6 @@
 import { Memory } from '@mastra/memory';
 import { PostgresStore } from '@mastra/pg';
+import { observationalMemoryModel } from '../utils/model-routing.js';
 
 // Shared store: Memory persistence AND the Mastra instance's top-level
 // storage (required by the observability MastraStorageExporter so AI
@@ -42,7 +43,9 @@ export const memory = new Memory({
       // prompt-cache TTL, so a returning user's next turn sees consolidated
       // memory without a blocking in-turn call.
       activateAfterIdle: '5m',
-      model: 'anthropic/claude-haiku-4-5-20251001',
+      // Anthropic Haiku 4.5 direct, or OpenRouter first with Anthropic as the
+      // fallback when OPENROUTER_API_KEY is set (ADR-0065 §3, ticket 675).
+      model: observationalMemoryModel(),
       observation: {
         messageTokens: 30_000,
       },
