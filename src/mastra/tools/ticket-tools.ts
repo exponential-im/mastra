@@ -3,6 +3,28 @@ import { z } from "zod";
 import { authenticatedTrpcCall } from "../utils/authenticated-fetch.js";
 import { looseBoolean, looseEnum, looseNumber, looseStringArray } from "./zod-loose.js";
 
+const TICKET_TYPES = ["BUG", "FEATURE", "CHORE", "IMPROVEMENT", "SPIKE", "RESEARCH"] as const;
+const TICKET_STATUSES = [
+  "BACKLOG",
+  "NEEDS_REFINEMENT",
+  "READY_TO_PLAN",
+  "COMMITTED",
+  "IN_PROGRESS",
+  "BLOCKED",
+  "QA",
+  "DONE",
+  "DEPLOYED",
+  "ARCHIVED",
+] as const;
+
+// Labels on single-ticket create/update: tag ids, slugs or names, resolved
+// server-side against the product's workspace (mastra.createTicket /
+// mastra.updateTicket). Unknown ones come back in `warnings`, never created.
+const labelRefs = () => looseStringArray(z.array(z.string().min(1).max(100)).max(20));
+const LABEL_REFS_HINT =
+  "Label ids, slugs or names from list-labels (e.g. [\"bug\", \"ai-buildable\"]). Unknown labels are skipped and reported in warnings — they are never created.";
+const ticketLabelSchema = z.object({ id: z.string(), name: z.string(), slug: z.string() });
+
 // ==================== Product Pipeline Ticket Tools ====================
 // Tools for listing products and filing tickets into a product's pipeline
 // (the board shown at /w/<workspace>/products/<product>/tickets).
@@ -59,7 +81,7 @@ export const listProductsTool = createTool({
 export const createTicketTool = createTool({
   id: "create-ticket",
   description:
-    "File a ticket into a product's pipeline (the tickets board). Use this when the user asks to create, file, log, or raise a ticket, bug, or feature request for a product. You MUST have a productId first — call list-products to resolve the product by name if you don't have one. Always confirm the title and target product with the user before creating.",
+    "File a ticket into a product's pipeline (the tickets board). Use this when the user asks to create, file, log, or raise a ticket, bug, or feature request for a product. You MUST have a productId first — call list-products to resolve the product by name if you don't have one. Always confirm the title and target product with the user before creating. Pass `labels` the ticket clearly deserves, picked from list-labels — never invent label names.",
   inputSchema: z.object({
     productId: z
       .string()
@@ -98,6 +120,7 @@ export const createTicketTool = createTool({
       .string()
       .optional()
       .describe("Optional user ID to assign the ticket to"),
+    labels: labelRefs().optional().describe(LABEL_REFS_HINT),
   }),
   outputSchema: z.object({
     ticket: z.object({
@@ -110,6 +133,9 @@ export const createTicketTool = createTool({
       priority: z.number().nullable(),
       productId: z.string(),
     }),
+    // Optional so an app deploy that predates ticket labels still validates.
+    labels: z.array(ticketLabelSchema).optional(),
+    warnings: z.array(z.string()).optional(),
   }),
   async execute(inputData, { requestContext }) {
     const authToken = requestContext?.get("authToken") as string | undefined;
@@ -118,7 +144,7 @@ export const createTicketTool = createTool({
 
     if (!authToken) throw new Error("No authentication token available");
 
-    console.log(`🎫 [createTicket] INPUT: productId=${inputData.productId}, title="${inputData.title}", type=${inputData.type || "FEATURE"}, status=${inputData.status || "BACKLOG"}`);
+    console.log(`🎫 [createTicket] INPUT: productId=${inputData.productId}, title="${inputData.title}", type=${inputData.type || "FEATURE"}, status=${inputData.status || "BACKLOG"}, labels=${inputData.labels?.length ?? 0}`);
     console.log(`🎫 [createTicket] CONTEXT: authToken=${authToken ? "present" : "MISSING"}, userId=${userId || "none"}`);
 
     try {
@@ -132,6 +158,143 @@ export const createTicketTool = createTool({
       return data;
     } catch (error) {
       console.error(`❌ [createTicket] FAILED:`, error);
+      throw error;
+    }
+  },
+});
+
+export const updateTicketTool = createTool({
+  id: "update-ticket",
+  description:
+    "Update ONE existing ticket: its title, body, type, status, priority, points, assignee, and/or labels. Identify the ticket by ticketId, or by productId + ticketNumber (the number list-tickets returns). Labels: `addLabels` / `removeLabels` edit the current set; `labels` REPLACES the whole set (use it only when the user wants exactly those labels). Pick labels from list-labels — never invent names. Only pass the fields you are changing. This WRITES data: confirm the change with the user first unless they asked for exactly this edit, then report the returned labels and any warnings honestly.",
+  inputSchema: z.object({
+    ticketId: z
+      .string()
+      .optional()
+      .describe("The ticket's id. Provide this OR productId + ticketNumber."),
+    productId: z
+      .string()
+      .optional()
+      .describe("The ticket's product (use list-products) — with ticketNumber, instead of ticketId"),
+    ticketNumber: looseNumber(z.number().int().positive())
+      .optional()
+      .describe("The ticket's number within its product, as list-tickets returns it — with productId"),
+    title: z.string().min(1).max(300).optional().describe("New title"),
+    body: z.string().optional().describe("New body (Markdown). Replaces the whole body."),
+    type: looseEnum(TICKET_TYPES).optional().describe("New ticket type"),
+    status: looseEnum(TICKET_STATUSES).optional().describe("New pipeline status"),
+    priority: looseNumber(z.number().int().min(0).max(4))
+      .nullable()
+      .optional()
+      .describe("Priority 0-4 (0 = critical, 4 = backlog); null clears it"),
+    points: looseNumber(z.number()).nullable().optional().describe("Estimate in points; null clears it"),
+    assigneeId: z
+      .string()
+      .nullable()
+      .optional()
+      .describe("User ID to assign the ticket to; null unassigns"),
+    labels: labelRefs()
+      .optional()
+      .describe(`REPLACE the ticket's labels with exactly these ([] clears them). If any is unknown, labels are left unchanged. ${LABEL_REFS_HINT}`),
+    addLabels: labelRefs().optional().describe(`Labels to add, keeping the existing ones. ${LABEL_REFS_HINT}`),
+    removeLabels: labelRefs().optional().describe("Labels to remove (ids, slugs or names)"),
+  }),
+  outputSchema: z.object({
+    ticket: z.object({
+      id: z.string(),
+      number: z.number(),
+      shortId: z.string().nullable(),
+      title: z.string(),
+      type: z.string(),
+      status: z.string(),
+      priority: z.number().nullable(),
+      points: z.number().nullable(),
+      assigneeId: z.string().nullable(),
+      productId: z.string(),
+    }),
+    labels: z.array(ticketLabelSchema),
+    warnings: z.array(z.string()),
+  }),
+  async execute(inputData, { requestContext }) {
+    const authToken = requestContext?.get("authToken") as string | undefined;
+    const sessionId = requestContext?.get("whatsappSession") as string | undefined;
+    const userId = requestContext?.get("userId") as string | undefined;
+
+    if (!authToken) throw new Error("No authentication token available");
+    if (!inputData.ticketId && !(inputData.productId && inputData.ticketNumber)) {
+      throw new Error("Pass ticketId, or productId with ticketNumber (use list-tickets to find the number)");
+    }
+
+    const ref = inputData.ticketId ?? `${inputData.productId}#${inputData.ticketNumber}`;
+    console.log(`🎫 [updateTicket] INPUT: ticket=${ref}, fields=${Object.keys(inputData).join(",")}`);
+
+    try {
+      const { data } = await authenticatedTrpcCall(
+        "mastra.updateTicket",
+        inputData,
+        { authToken, sessionId, userId },
+      );
+
+      const result = data as { labels?: unknown[]; warnings?: string[] };
+      console.log(`✅ [updateTicket] SUCCESS: labels=${result.labels?.length ?? 0}, warnings=${result.warnings?.length ?? 0}`);
+      return data;
+    } catch (error) {
+      console.error(`❌ [updateTicket] FAILED:`, error);
+      throw error;
+    }
+  },
+});
+
+export const listLabelsTool = createTool({
+  id: "list-labels",
+  description:
+    "List the labels that can be put on tickets in a workspace (global labels plus the workspace's own), with id, name, slug, description and scope. Call it before create-ticket / update-ticket / bulk-create-tickets so you apply REAL labels: pick the ones whose name or description clearly fits the ticket's content (and the user's request), and never invent label names. Pass a productId (from list-products) OR a workspaceId. Read-only.",
+  inputSchema: z.object({
+    productId: z
+      .string()
+      .optional()
+      .describe("A product in the target workspace — use list-products to resolve it. Provide this OR workspaceId."),
+    workspaceId: z
+      .string()
+      .optional()
+      .describe("The workspace whose labels to list. Provide this OR productId."),
+  }),
+  outputSchema: z.object({
+    workspaceId: z.string(),
+    labels: z.array(
+      z.object({
+        id: z.string(),
+        name: z.string(),
+        slug: z.string(),
+        description: z.string().nullable(),
+        category: z.string().nullable(),
+        scope: z.enum(["workspace", "global"]),
+      }),
+    ),
+  }),
+  async execute(inputData, { requestContext }) {
+    const authToken = requestContext?.get("authToken") as string | undefined;
+    const sessionId = requestContext?.get("whatsappSession") as string | undefined;
+    const userId = requestContext?.get("userId") as string | undefined;
+
+    if (!authToken) throw new Error("No authentication token available");
+    if (!inputData.productId && !inputData.workspaceId) {
+      throw new Error("Pass a productId (use list-products) or a workspaceId");
+    }
+
+    console.log(`🏷️ [listLabels] Fetching labels for ${inputData.productId ? `product ${inputData.productId}` : `workspace ${inputData.workspaceId}`}`);
+
+    try {
+      const { data } = await authenticatedTrpcCall(
+        "mastra.listLabels",
+        { productId: inputData.productId, workspaceId: inputData.workspaceId },
+        { authToken, sessionId, userId },
+      );
+
+      console.log(`✅ [listLabels] Found ${(data as { labels?: unknown[] })?.labels?.length ?? 0} labels`);
+      return data;
+    } catch (error) {
+      console.error(`❌ [listLabels] FAILED:`, error);
       throw error;
     }
   },
