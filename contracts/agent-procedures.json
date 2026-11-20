@@ -16,12 +16,19 @@
             "type": "array",
             "items": {
               "type": "string"
+            },
+            "default": []
+          },
+          "emails": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "email"
             }
           }
         },
         "required": [
-          "actionId",
-          "userIds"
+          "actionId"
         ]
       }
     },
@@ -4202,6 +4209,13 @@
           "forReference": {
             "type": "boolean",
             "default": false
+          },
+          "tagIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20
           }
         },
         "required": [

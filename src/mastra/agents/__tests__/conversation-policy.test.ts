@@ -44,6 +44,10 @@ describe('CONVERSATION_POLICY', () => {
     expect(CONVERSATION_POLICY).toMatch(/These hold whatever personality or tone you have been given/);
   });
 
+  it('asks for the intent step label on every tool call, in one line', () => {
+    expect(CONVERSATION_POLICY).toMatch(/^Fill `intent` on every tool call\.$/m);
+  });
+
   it('stays short: four numbered rules', () => {
     expect(CONVERSATION_POLICY.match(/^\d\. \*\*/gm)).toHaveLength(4);
   });
