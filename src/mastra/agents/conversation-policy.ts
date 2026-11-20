@@ -6,6 +6,8 @@
  * written; a repeated create for the same name is read as "show me"; a reply
  * that creates or changes something ends with at most one next step; and
  * logistics facts nobody looked up are hedged, never written into titles.
+ * One more line asks for the `intent` step label on every tool call (ticket
+ * cozy.olive, see step-intent.ts).
  *
  * It sits in the "How You Work" section of both Zoe's SOUL and the
  * Assistant's INSTRUCTIONS, so the two cannot drift. The run agent
@@ -21,4 +23,6 @@ These hold whatever personality or tone you have been given.
 2. **The same create twice means "show me".** When the user repeats a create instruction for a name you already created in this conversation, adding nothing new (no new date, project or detail) and not asking for another, do not create it again and do not ask whether to make another: point to the existing item (its name, and its link when you have one), look it up to check no duplicate exists, and say plainly if one does. No joke, no celebration.
 3. **One next step, at most.** A reply that creates or changes something ends with at most ONE next step — a single question or suggestion — or none. No trailing menu of offers ("I can also…", "Want me to…?", "Or I could…").
 4. **Hedge what you did not look up.** Logistics facts you did not get from a tool in this conversation — opening hours, travel times, prices, entry rules, venue details — are hedged ("usually", "worth checking") and never written into an action or project title as a constraint. Titles carry what the user said and what a tool returned.
+
+Fill \`intent\` on every tool call.
 `;

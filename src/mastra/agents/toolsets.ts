@@ -32,6 +32,8 @@
  * in a request are ignored, so the two sides can roll out independently.
  */
 
+import { withStepIntent } from './step-intent.js';
+
 export const TOOLSET_IDS = [
   'planning',
   'tickets',
@@ -344,5 +346,10 @@ export function agentTools<T>(
   allTools: Record<string, T>,
   profile: ToolProfile,
 ): Record<string, T> | ((args: { requestContext?: RequestContextLike }) => Record<string, T>) {
-  return profile === 'anthropic' ? allTools : createToolsResolver(allTools, profile);
+  // Every function tool gets the optional `intent` step label (ticket
+  // cozy.olive). This runs at agent definition, so the cache middleware in
+  // anthropic-prompt-cache.ts sees the wrapped tools when it marks them
+  // `deferLoading` per request.
+  const tools = withStepIntent(allTools);
+  return profile === 'anthropic' ? tools : createToolsResolver(tools, profile);
 }

@@ -222,12 +222,15 @@ describe('createToolsResolver', () => {
 describe('agentTools', () => {
   const all = fake(zoeKeys);
 
-  it('returns the static map itself for the anthropic profile', () => {
+  it('returns a static map, not a resolver, for the anthropic profile', () => {
     // @mastra/core only registers tools on the Mastra instance (and voice)
     // when the Agent's `tools` option is a plain object.
-    const tools = agentTools(all, 'anthropic');
+    // The map is a copy (withStepIntent wraps function tools); these fakes are
+    // not Mastra tools, so each entry passes through as the same object.
+    const tools = agentTools(all, 'anthropic') as Record<string, unknown>;
     expect(typeof tools).toBe('object');
-    expect(tools).toBe(all);
+    expect(Object.keys(tools)).toEqual(Object.keys(all));
+    for (const key of Object.keys(all)) expect(tools[key]).toBe(all[key]);
   });
 
   it('returns a per-request resolver for the generic profile', () => {
